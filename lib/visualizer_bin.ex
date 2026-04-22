@@ -2,7 +2,7 @@ defmodule Gemini.TermiteMicDemo.VisualizerBin do
   @moduledoc """
   This bin is used to receive raw audio streams and process them appropriately before feeding them
   to the `on_samples` anonymous function. The buffers are chunked if deemed too large
-  (e.g. the Gemini Live API would start its response with a 960ms buffer followed by 40ms deltas),
+  (e.g. Google Live API would start its response with a 960ms buffer followed by 40ms deltas),
   and realtimed before being sent to `Gemini.TermiteMicDemo.VisSink`, which samples `@sample_count`
   evenly-spaced samples from each buffer.
   """

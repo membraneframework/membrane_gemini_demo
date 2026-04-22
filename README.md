@@ -1,21 +1,15 @@
-# MembraneGeminiDemo
+# Membrane Gemini TUI Demo
 
-**TODO: Add description**
+[![CircleCI](https://circleci.com/gh/membraneframework/membrane_template_plugin.svg?style=svg)](https://circleci.com/gh/membraneframework/membrane_gemini_demo)
 
-## Installation
+This repository contains an example chatbot app integrating the Google Live API using [`membrane_gemini_plugin`](https://github.com/membraneframework/membrane_gemini_plugin). It's a TUI app built using [Membrane](https://membrane.stream) for audio processing and [Termite](https://github.com/Gazler/termite) for the UI.
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `membrane_gemini_demo` to your list of dependencies in `mix.exs`:
+## Usage
 
-```elixir
-def deps do
-  [
-    {:membrane_gemini_demo, "~> 0.1.0"}
-  ]
-end
+To run the demo:
 ```
+GEMINI_API_KEY="your API key" mix demo
+```
+You can prompt Gemini via the text input field, or speak to it directly. Membrane will try using the default input device via [`membrane_portaudio_plugin`](https://github.com/membraneframework/membrane_portaudio_plugin). Press `m` to mute, `d` to show the event log, speech transcripts, etc. Send `/clear` via text prompt to reset the session context.
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/membrane_gemini_demo>.
-
+NOTE: be sure to use headphones to avoid audio feedback, otherwise the LLM might start talking with itself.

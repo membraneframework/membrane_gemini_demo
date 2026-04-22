@@ -4,6 +4,9 @@ defmodule Mix.Tasks.Demo do
 
   use Mix.Task
 
+  # Mix.Task behaviour has no PLT info; suppress the spurious callback_info_missing warning.
+  @dialyzer :no_behaviours
+
   @requirements ["app.start"]
 
   @spec run(any()) :: no_return()

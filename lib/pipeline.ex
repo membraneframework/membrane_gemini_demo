@@ -3,10 +3,10 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
 
   use Membrane.Pipeline
 
-  alias Gemini.TermiteMicDemo.State
-
   @impl true
-  def handle_init(_ctx, _opts) do
+  def handle_init(_ctx, opts) do
+    tui_pid = Keyword.fetch!(opts, :tui_pid)
+
     spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,
@@ -15,14 +15,15 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
       })
       |> child(:mute_filter, Gemini.TermiteMicDemo.MuteFilter)
       |> child(:mic_visualizer, %Gemini.TermiteMicDemo.VisualizerBin{
-        on_samples: &State.add_mic_samples/1
+        on_samples: fn samples -> send(tui_pid, {:mic_samples, samples}) end
       })
-      # |> child(:fake, Membrane.Fake.Sink)
       |> via_in(:audio_input)
       |> child(:gemini, %Membrane.Gemini.Bin{})
-      |> child(:event_handler, %Membrane.Debug.Filter{handle_event: &handle_gemini_event/1})
+      |> child(:event_handler, %Membrane.Debug.Filter{
+        handle_event: fn event -> handle_gemini_event(event, tui_pid) end
+      })
       |> child(:gemini_visualizer, %Gemini.TermiteMicDemo.VisualizerBin{
-        on_samples: &State.add_gemini_samples/1
+        on_samples: fn samples -> send(tui_pid, {:gemini_samples, samples}) end
       })
       |> child(:gemini_speaker, %Membrane.PortAudio.Sink{
         ringbuffer_size: 32_768,
@@ -48,23 +49,23 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
   def handle_info(:toggle_mute, _ctx, state),
     do: {[notify_child: {:mute_filter, :toggle_mute}], state}
 
-  defp handle_gemini_event(event) do
+  defp handle_gemini_event(event, tui_pid) do
     case event do
       %Membrane.Gemini.Events.Transcript{text: text, audio_origin: :client} ->
-        State.set_input_transcript(text)
+        send(tui_pid, {:input_transcript, text})
 
       %Membrane.Gemini.Events.Transcript{text: text, audio_origin: :server} ->
-        State.set_output_transcript(text)
+        send(tui_pid, {:output_transcript, text})
 
       %Membrane.Gemini.Events.Thinking{text: text} ->
-        State.set_thinking(text)
+        send(tui_pid, {:thinking, text})
 
       %Membrane.Gemini.Events.ResponseStart{} ->
-        State.clear_transcripts()
-        State.set_event("Response started")
+        send(tui_pid, :clear_transcripts)
+        send(tui_pid, {:event, "Response started"})
 
       %Membrane.Gemini.Events.ResponseEnd{interrupted?: interrupted?} ->
-        State.set_event(if interrupted?, do: "Response interrupted", else: "Response complete")
+        send(tui_pid, {:event, if(interrupted?, do: "Response interrupted", else: "Response complete")})
 
       _event ->
         :ok

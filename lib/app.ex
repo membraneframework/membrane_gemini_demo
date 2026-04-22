@@ -3,15 +3,15 @@ defmodule Gemini.TermiteMicDemo.App do
 
   import Bitwise
 
-  alias Gemini.TermiteMicDemo.State
   alias Termite.{Screen, Style, Terminal}
 
   @waveform_char_height 8
-
-  # Minimum amplitude used for waveform normalization. Raising this prevents quiet
-  # noise from being amplified to fill the full waveform height.
-  # 1.0e-4 = normalize everything (very sensitive); 0.05 = ignore signals below 5% full scale.
   @noise_floor 0.005
+  @max_history 200
+
+  @type event_entry ::
+          {:event, String.t()}
+          | {:log, Logger.level(), String.t()}
 
   @type t :: %__MODULE__{
           term: term(),
@@ -19,7 +19,14 @@ defmodule Gemini.TermiteMicDemo.App do
           status: String.t(),
           pipeline_pid: pid(),
           debug_mode: boolean(),
-          muted: boolean()
+          muted: boolean(),
+          mic_samples: [float()],
+          gemini_samples: [float()],
+          input_transcript: String.t(),
+          output_transcript: String.t(),
+          thinking: String.t(),
+          last_event: String.t(),
+          event_history: [event_entry()]
         }
 
   defstruct [
@@ -28,16 +35,25 @@ defmodule Gemini.TermiteMicDemo.App do
     input_buffer: "",
     status: "Ready. Speak into your mic or type text to send to Gemini.",
     debug_mode: false,
-    muted: false
+    muted: false,
+    mic_samples: [],
+    gemini_samples: [],
+    input_transcript: "",
+    output_transcript: "",
+    thinking: "",
+    last_event: "",
+    event_history: []
   ]
 
   @spec start() :: no_return()
   def start do
+    tui_pid = self()
+
     :logger.remove_handler(:default)
-    :logger.add_handler(:tui, Gemini.TermiteMicDemo.LoggerHandler, %{})
+    :logger.add_handler(:tui, Gemini.TermiteMicDemo.LoggerHandler, %{config: %{tui_pid: tui_pid}})
 
     {:ok, _supervisor, pipeline} =
-      Membrane.Pipeline.start_link(Gemini.TermiteMicDemo.Pipeline, [])
+      Membrane.Pipeline.start_link(Gemini.TermiteMicDemo.Pipeline, tui_pid: tui_pid)
 
     terminal = Terminal.start()
 
@@ -52,11 +68,48 @@ defmodule Gemini.TermiteMicDemo.App do
 
   @spec loop(t()) :: no_return()
   defp loop(state) do
-    state = render(state)
+    state =
+      state
+      |> drain_mailbox()
+      |> render()
 
     state
     |> handle_poll(Terminal.poll(state.term, 50))
     |> loop()
+  end
+
+  @spec drain_mailbox(t()) :: t()
+  defp drain_mailbox(%__MODULE__{} = state) do
+    receive do
+      {:mic_samples, samples} ->
+        drain_mailbox(%{state | mic_samples: Enum.take(state.mic_samples ++ samples, -200)})
+
+      {:gemini_samples, samples} ->
+        drain_mailbox(%{state | gemini_samples: Enum.take(state.gemini_samples ++ samples, -200)})
+
+      {:input_transcript, text} ->
+        entry = "Input:   #{text}"
+        drain_mailbox(%{state | input_transcript: text, last_event: entry} |> push_history({:event, entry}))
+
+      {:output_transcript, text} ->
+        entry = "Output:  #{text}"
+        drain_mailbox(%{state | output_transcript: text, last_event: entry} |> push_history({:event, entry}))
+
+      {:thinking, text} ->
+        entry = "Thinking: #{text}"
+        drain_mailbox(%{state | thinking: text, last_event: "Thinking..."} |> push_history({:event, entry}))
+
+      {:event, text} ->
+        drain_mailbox(%{state | last_event: text} |> push_history({:event, text}))
+
+      :clear_transcripts ->
+        drain_mailbox(%{state | output_transcript: "", thinking: ""})
+
+      {:log, level, text} ->
+        drain_mailbox(push_history(state, {:log, level, text}))
+    after
+      0 -> state
+    end
   end
 
   @spec handle_poll(t(), term()) :: t()
@@ -90,7 +143,6 @@ defmodule Gemini.TermiteMicDemo.App do
 
   @spec render(t()) :: t()
   defp render(%__MODULE__{} = state) do
-    shared = State.get_state()
     {color, mic_text} = mic_status_info(state.muted)
     w = term_width()
     waveform_char_width = max(div(w - 4, 2), 10)
@@ -100,7 +152,7 @@ defmodule Gemini.TermiteMicDemo.App do
         available_lines = max(term_height() - 23, 0)
 
         entries =
-          shared.event_history
+          state.event_history
           |> Enum.reverse()
           |> with_separators()
           |> Enum.flat_map(&format_history_entry(w, &1))
@@ -120,7 +172,7 @@ defmodule Gemini.TermiteMicDemo.App do
         (Style.foreground(6) |> Style.render_to_string("Mic Input")) <>
         "  " <>
         (Style.foreground(5) |> Style.render_to_string("Gemini\n")) <>
-        render_waveforms(shared.mic_samples, shared.gemini_samples, waveform_char_width) <>
+        render_waveforms(state.mic_samples, state.gemini_samples, waveform_char_width) <>
         "\n" <>
         (Style.bold() |> Style.render_to_string("gemini> ")) <>
         "#{state.input_buffer}█\n\n" <>
@@ -137,8 +189,11 @@ defmodule Gemini.TermiteMicDemo.App do
     %{state | term: term}
   end
 
-  @spec with_separators([State.Data.event_entry() | :separator]) ::
-          [State.Data.event_entry() | :separator]
+  @spec push_history(t(), event_entry()) :: t()
+  defp push_history(%__MODULE__{} = state, entry),
+    do: %{state | event_history: Enum.take([entry | state.event_history], @max_history)}
+
+  @spec with_separators([event_entry() | :separator]) :: [event_entry() | :separator]
   defp with_separators([]), do: []
   defp with_separators([_entry] = list), do: list
 
@@ -148,11 +203,11 @@ defmodule Gemini.TermiteMicDemo.App do
       else: [a | with_separators([b | rest])]
   end
 
-  @spec entry_kind(State.Data.event_entry()) :: :log | :event
+  @spec entry_kind(event_entry()) :: :log | :event
   defp entry_kind({:log, _level, _text}), do: :log
   defp entry_kind({:event, _text}), do: :event
 
-  @spec format_history_entry(pos_integer(), State.Data.event_entry() | :separator) :: [iodata()]
+  @spec format_history_entry(pos_integer(), event_entry() | :separator) :: [iodata()]
   defp format_history_entry(_w, :separator), do: ["\n"]
 
   defp format_history_entry(w, {:event, text}) do

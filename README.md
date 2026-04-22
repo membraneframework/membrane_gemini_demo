@@ -1,6 +1,6 @@
 # Membrane Gemini TUI Demo
 
-[![CircleCI](https://circleci.com/gh/membraneframework/membrane_template_plugin.svg?style=svg)](https://circleci.com/gh/membraneframework/membrane_gemini_demo)
+[![CircleCI](https://circleci.com/gh/membraneframework/membrane_gemini_demo.svg?style=svg)](https://circleci.com/gh/membraneframework/membrane_gemini_demo)
 
 This repository contains an example chatbot app integrating the Google Live API using [`membrane_gemini_plugin`](https://github.com/membraneframework/membrane_gemini_plugin). It's a TUI app built using [Membrane](https://membrane.stream) for audio processing and [Termite](https://github.com/Gazler/termite) for the UI.
 

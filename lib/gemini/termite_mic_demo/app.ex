@@ -1,6 +1,9 @@
 defmodule Gemini.TermiteMicDemo.App do
+  @moduledoc false
+
   import Bitwise
 
+  alias Gemini.TermiteMicDemo.State
   alias Termite.{Screen, Style, Terminal}
 
   @waveform_char_height 8
@@ -10,6 +13,25 @@ defmodule Gemini.TermiteMicDemo.App do
   # 1.0e-4 = normalize everything (very sensitive); 0.05 = ignore signals below 5% full scale.
   @noise_floor 0.005
 
+  @type t :: %__MODULE__{
+          term: term(),
+          input_buffer: String.t(),
+          status: String.t(),
+          pipeline_pid: pid(),
+          debug_mode: boolean(),
+          muted: boolean()
+        }
+
+  defstruct [
+    :term,
+    :pipeline_pid,
+    input_buffer: "",
+    status: "Ready. Speak into your mic or type text to send to Gemini.",
+    debug_mode: false,
+    muted: false
+  ]
+
+  @spec start() :: no_return()
   def start do
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, Gemini.TermiteMicDemo.LoggerHandler, %{})
@@ -23,54 +45,52 @@ defmodule Gemini.TermiteMicDemo.App do
       terminal
       |> Screen.run_escape_sequence(:screen_alt)
       |> Screen.run_escape_sequence(:cursor_hide)
+      |> Screen.run_escape_sequence(:screen_clear)
 
-    state = %{
-      term: term,
-      input_buffer: "",
-      status: "Ready. Speak into your mic or type text to send to Gemini.",
-      pipeline_pid: pipeline,
-      debug_mode: false,
-      muted: false
-    }
-
-    term = Screen.run_escape_sequence(term, :screen_clear)
-    loop(%{state | term: term})
+    loop(%__MODULE__{term: term, pipeline_pid: pipeline})
   end
 
+  @spec loop(t()) :: no_return()
   defp loop(state) do
     state = render(state)
 
-    case Terminal.poll(state.term, 50) do
-      {:data, "\r"} -> handle_submit(state) |> loop()
-      {:data, "\n"} -> handle_submit(state) |> loop()
-      {:data, <<127>>} -> delete_char(state) |> loop()
-      {:data, <<23>>} -> delete_word(state) |> loop()
-      {:data, <<21>>} -> clear_buffer(state) |> loop()
-      {:data, "d"} when state.input_buffer == "" -> toggle_debug(state) |> loop()
-      {:data, "m"} when state.input_buffer == "" -> toggle_mute(state) |> loop()
-      {:data, char} when byte_size(char) == 1 -> add_char(state, char) |> loop()
-      {:data, _data} -> loop(state)
-      :timeout -> loop(state)
-      _other -> loop(state)
-    end
+    state
+    |> handle_poll(Terminal.poll(state.term, 50))
+    |> loop()
   end
 
+  @spec handle_poll(t(), term()) :: t()
+  defp handle_poll(state, {:data, "\r"}), do: handle_submit(state)
+  defp handle_poll(state, {:data, "\n"}), do: handle_submit(state)
+  defp handle_poll(state, {:data, <<127>>}), do: delete_char(state)
+  defp handle_poll(state, {:data, <<23>>}), do: delete_word(state)
+  defp handle_poll(state, {:data, <<21>>}), do: clear_buffer(state)
+  defp handle_poll(state, {:data, "d"}) when state.input_buffer == "", do: toggle_debug(state)
+  defp handle_poll(state, {:data, "m"}) when state.input_buffer == "", do: toggle_mute(state)
+  defp handle_poll(state, {:data, char}) when byte_size(char) == 1, do: add_char(state, char)
+  defp handle_poll(state, {:data, _data}), do: state
+  defp handle_poll(state, :timeout), do: state
+  defp handle_poll(state, _other), do: state
+
+  @spec term_width() :: pos_integer()
   defp term_width do
     case :io.columns() do
       {:ok, w} -> w
-      _ -> 80
+      _error -> 80
     end
   end
 
+  @spec term_height() :: pos_integer()
   defp term_height do
     case :io.rows() do
       {:ok, h} -> h
-      _ -> 24
+      _error -> 24
     end
   end
 
-  defp render(state) do
-    shared = Gemini.TermiteMicDemo.State.get_state()
+  @spec render(t()) :: t()
+  defp render(%__MODULE__{} = state) do
+    shared = State.get_state()
     {color, mic_text} = mic_status_info(state.muted)
     w = term_width()
     waveform_char_width = max(div(w - 4, 2), 10)
@@ -117,8 +137,10 @@ defmodule Gemini.TermiteMicDemo.App do
     %{state | term: term}
   end
 
+  @spec with_separators([State.Data.event_entry() | :separator]) ::
+          [State.Data.event_entry() | :separator]
   defp with_separators([]), do: []
-  defp with_separators([_] = list), do: list
+  defp with_separators([_entry] = list), do: list
 
   defp with_separators([a, b | rest]) do
     if entry_kind(a) != entry_kind(b),
@@ -126,9 +148,11 @@ defmodule Gemini.TermiteMicDemo.App do
       else: [a | with_separators([b | rest])]
   end
 
-  defp entry_kind({:log, _, _}), do: :log
-  defp entry_kind({:event, _}), do: :event
+  @spec entry_kind(State.Data.event_entry()) :: :log | :event
+  defp entry_kind({:log, _level, _text}), do: :log
+  defp entry_kind({:event, _text}), do: :event
 
+  @spec format_history_entry(pos_integer(), State.Data.event_entry() | :separator) :: [iodata()]
   defp format_history_entry(_w, :separator), do: ["\n"]
 
   defp format_history_entry(w, {:event, text}) do
@@ -152,6 +176,7 @@ defmodule Gemini.TermiteMicDemo.App do
     end)
   end
 
+  @spec chunk_text(String.t(), width :: pos_integer()) :: [String.t()]
   defp chunk_text(text, width) do
     text
     |> String.graphemes()
@@ -159,26 +184,28 @@ defmodule Gemini.TermiteMicDemo.App do
     |> Enum.map(&Enum.join/1)
   end
 
+  @spec log_color(Logger.level()) :: pos_integer()
   defp log_color(:debug), do: 4
   defp log_color(:info), do: 7
   defp log_color(:warning), do: 3
   defp log_color(:error), do: 1
-  defp log_color(_), do: 1
+  defp log_color(_level), do: 1
 
+  @spec render_waveforms([float()], [float()], pos_integer()) :: String.t()
   defp render_waveforms(left, right, char_width) do
     left_rows = build_braille_waveform(left, @waveform_char_height, char_width)
     right_rows = build_braille_waveform(right, @waveform_char_height, char_width)
 
     Enum.zip(left_rows, right_rows)
-    |> Enum.map(fn {l, r} ->
+    |> Enum.map_join(fn {l, r} ->
       (Style.foreground(6) |> Style.render_to_string(l)) <>
         "  " <>
         (Style.foreground(5) |> Style.render_to_string(r)) <>
         "\n"
     end)
-    |> Enum.join("")
   end
 
+  @spec build_braille_waveform([float()], pos_integer(), pos_integer()) :: [String.t()]
   defp build_braille_waveform(samples, char_height, char_width) do
     dot_height = char_height * 4
     num_samples = char_width * 2
@@ -203,8 +230,7 @@ defmodule Gemini.TermiteMicDemo.App do
       end)
 
     for char_row <- 0..(char_height - 1) do
-      0..(char_width - 1)
-      |> Enum.map(fn char_col ->
+      Enum.map_join(0..(char_width - 1), fn char_col ->
         value =
           for dot_col <- 0..1,
               local_row <- 0..3,
@@ -215,10 +241,10 @@ defmodule Gemini.TermiteMicDemo.App do
 
         <<0x2800 + value::utf8>>
       end)
-      |> Enum.join("")
     end
   end
 
+  @spec pad_samples([float()], pos_integer()) :: [float()]
   defp pad_samples(samples, target) do
     n = length(samples)
 
@@ -231,12 +257,15 @@ defmodule Gemini.TermiteMicDemo.App do
     Enum.map(padded, fn s -> s / max_amp end)
   end
 
+  @spec fill_dots(MapSet.t(), non_neg_integer(), 0 | 1, non_neg_integer(), non_neg_integer()) ::
+          MapSet.t()
   defp fill_dots(set, char_col, dot_col, from_row, to_row) do
     Enum.reduce(min(from_row, to_row)..max(from_row, to_row), set, fn abs_row, acc ->
       MapSet.put(acc, {char_col, div(abs_row, 4), dot_col, rem(abs_row, 4)})
     end)
   end
 
+  @spec braille_bit(0 | 1, 0 | 1 | 2 | 3) :: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
   defp braille_bit(dot_col, local_row) do
     case {dot_col, local_row} do
       {0, 0} -> 0
@@ -250,22 +279,29 @@ defmodule Gemini.TermiteMicDemo.App do
     end
   end
 
+  @spec mic_status_info(boolean()) :: {pos_integer(), String.t()}
   defp mic_status_info(false), do: {2, "MIC LIVE - Speaking into microphone"}
   defp mic_status_info(true), do: {1, "MIC MUTED - Microphone is silenced"}
 
-  defp toggle_debug(state), do: %{state | debug_mode: !state.debug_mode}
+  @spec toggle_debug(t()) :: t()
+  defp toggle_debug(%__MODULE__{} = state), do: %{state | debug_mode: !state.debug_mode}
 
-  defp toggle_mute(state) do
+  @spec toggle_mute(t()) :: t()
+  defp toggle_mute(%__MODULE__{} = state) do
     send(state.pipeline_pid, :toggle_mute)
-    new_muted = !state.muted
-    status = if new_muted, do: "Mic muted", else: "Mic unmuted"
-    %{state | muted: new_muted, status: status}
+    if state.muted do
+      %{state | muted: false, status: "Mic unmuted"}
+    else
+      %{state | muted: true, status: "Mic muted"}
+    end
   end
 
-  defp delete_char(state),
+  @spec delete_char(t()) :: t()
+  defp delete_char(%__MODULE__{} = state),
     do: %{state | input_buffer: String.slice(state.input_buffer, 0..-2//1)}
 
-  defp delete_word(state) do
+  @spec delete_word(t()) :: t()
+  defp delete_word(%__MODULE__{} = state) do
     new_buffer =
       state.input_buffer
       |> String.trim_trailing()
@@ -280,34 +316,27 @@ defmodule Gemini.TermiteMicDemo.App do
     %{state | input_buffer: new_buffer}
   end
 
-  defp clear_buffer(state), do: %{state | input_buffer: ""}
+  @spec clear_buffer(t()) :: t()
+  defp clear_buffer(%__MODULE__{} = state), do: %{state | input_buffer: ""}
 
-  defp add_char(state, char), do: %{state | input_buffer: state.input_buffer <> char}
+  @spec add_char(t(), String.t()) :: t()
+  defp add_char(%__MODULE__{} = state, char), do: %{state | input_buffer: state.input_buffer <> char}
 
-  defp handle_submit(state) do
+  @spec handle_submit(t()) :: t()
+  defp handle_submit(%__MODULE__{} = state) do
     input = String.trim(state.input_buffer)
 
     if input == "" do
       state
     else
       {message, description} =
-        cond do
-          input == "/clear" -> {:reset_session, "Reset session"}
-          true -> {{:text, input}, "Sent to Gemini: #{input}"}
+        case input do
+          "/clear" -> {:reset_session, "Reset session"}
+          _input -> {{:text, input}, "Sent to Gemini: #{input}"}
         end
 
       send(state.pipeline_pid, message)
       %{state | input_buffer: "", status: description}
     end
-  end
-
-  defp cleanup_and_exit(state) do
-    state.term
-    |> Screen.run_escape_sequence(:cursor_show)
-    |> Screen.run_escape_sequence(:screen_alt_exit)
-    |> Screen.run_escape_sequence(:screen_clear)
-
-    :timer.sleep(10)
-    System.halt()
   end
 end

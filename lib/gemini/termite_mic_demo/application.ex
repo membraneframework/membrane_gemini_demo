@@ -1,4 +1,6 @@
 defmodule Gemini.TermiteMicDemo.Application do
+  @moduledoc false
+  
   use Application
 
   @impl true

@@ -1,4 +1,6 @@
 defmodule Gemini.TermiteMicDemo.TextSource do
+  @moduledoc false
+  
   use Membrane.Source
 
   def_output_pad :output,

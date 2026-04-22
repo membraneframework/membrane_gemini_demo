@@ -1,4 +1,6 @@
 defmodule Gemini.TermiteMicDemo.MuteFilter do
+  @moduledoc false
+  
   use Membrane.Filter
 
   alias Membrane.RawAudio

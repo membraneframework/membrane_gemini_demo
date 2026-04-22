@@ -1,7 +1,11 @@
 defmodule Gemini.TermiteMicDemo.LoggerHandler do
-  def adding_handler(config), do: {:ok, config}
-  def removing_handler(_config), do: :ok
-
+  @moduledoc false
+  
+  # TODO: remove _config arg, maybe even this module entirely
+  @spec log(%{
+    level: Logger.level(),
+    msg: {:string, iodata()} | {:report, any()} | {:io.format(), [term()]}
+  }, any()) :: :ok
   def log(%{level: level, msg: msg}, _config) do
     text =
       case msg do

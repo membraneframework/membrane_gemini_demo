@@ -31,8 +31,8 @@ defmodule Gemini.TermiteMicDemo.VisSink do
       for i <- 0..(num_blocks - 1) do
         start = i * block_size
 
-        <<_::binary-size(start * 2), s::signed-little-16, _::binary>> = binary
-        s / 32_768.0
+        <<_head::binary-size(start * 2), sample::signed-little-16, _tail::binary>> = binary
+        sample / 32_768.0
       end
     end
   end

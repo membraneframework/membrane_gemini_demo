@@ -16,7 +16,7 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       dialyzer: dialyzer(),
 
       # docs
-      name: "Membrane Gemini demo",
+      name: "Membrane Gemini Plugin demo",
       source_url: @github_url,
       homepage_url: "https://membrane.stream"
     ]

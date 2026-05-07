@@ -82,31 +82,31 @@ defmodule Gemini.TermiteMicDemo.App do
   defp drain_mailbox(%__MODULE__{} = state) do
     receive do
       {:mic_samples, samples} ->
-        drain_mailbox(%{state | mic_samples: Enum.take(state.mic_samples ++ samples, -200)})
+        %{state | mic_samples: Enum.take(state.mic_samples ++ samples, -200)} |> drain_mailbox()
 
       {:gemini_samples, samples} ->
-        drain_mailbox(%{state | gemini_samples: Enum.take(state.gemini_samples ++ samples, -200)})
+        %{state | gemini_samples: Enum.take(state.gemini_samples ++ samples, -200)} |> drain_mailbox()
 
       {:input_transcript, text} ->
         entry = "Input:   #{text}"
-        drain_mailbox(%{state | input_transcript: text, last_event: entry} |> push_history({:event, entry}))
+        %{state | input_transcript: text, last_event: entry} |> push_history({:event, entry}) |> drain_mailbox()
 
       {:output_transcript, text} ->
         entry = "Output:  #{text}"
-        drain_mailbox(%{state | output_transcript: text, last_event: entry} |> push_history({:event, entry}))
+        %{state | output_transcript: text, last_event: entry} |> push_history({:event, entry}) |> drain_mailbox()
 
       {:thinking, text} ->
         entry = "Thinking: #{text}"
-        drain_mailbox(%{state | thinking: text, last_event: "Thinking..."} |> push_history({:event, entry}))
+        %{state | thinking: text, last_event: "Thinking..."} |> push_history({:event, entry}) |> drain_mailbox()
 
       {:event, text} ->
-        drain_mailbox(%{state | last_event: text} |> push_history({:event, text}))
+        %{state | last_event: text} |> push_history({:event, text}) |> drain_mailbox()
 
       :clear_transcripts ->
-        drain_mailbox(%{state | output_transcript: "", thinking: ""})
+        %{state | output_transcript: "", thinking: ""} |> drain_mailbox()
 
       {:log, level, text} ->
-        drain_mailbox(push_history(state, {:log, level, text}))
+        state |> push_history({:log, level, text}) |> drain_mailbox()
     after
       0 -> state
     end
@@ -166,20 +166,26 @@ defmodule Gemini.TermiteMicDemo.App do
         ""
       end
 
-    frame =
-      (Style.bold() |> Style.foreground(color) |> Style.render_to_string("#{mic_text}\n")) <>
-        "Status: #{state.status}\n\n" <>
-        (Style.foreground(6) |> Style.render_to_string("Mic Input")) <>
-        "  " <>
-        (Style.foreground(5) |> Style.render_to_string("Gemini\n")) <>
-        render_waveforms(state.mic_samples, state.gemini_samples, waveform_char_width) <>
-        "\n" <>
-        (Style.bold() |> Style.render_to_string("gemini> ")) <>
-        "#{state.input_buffer}█\n\n" <>
-        (Style.foreground(4)
-         |> Style.render_to_string("m=mute | d=debug\n")) <>
-        history_section <>
-        "\e[J"
+      mic_text_formatted = (Style.bold() |> Style.foreground(color) |> Style.render_to_string("#{mic_text}\n"))
+      mic_input_formatted = (Style.foreground(6) |> Style.render_to_string("Mic Input"))
+      gemini_input_formatted = (Style.foreground(5) |> Style.render_to_string("Gemini\n"))
+      waveforms = render_waveforms(state.mic_samples, state.gemini_samples, waveform_char_width)
+      input_prompt = (Style.bold() |> Style.render_to_string("gemini> "))
+      controls_info_map = Style.foreground(4) |> Style.render_to_string("m=mute | d=debug")
+
+      frame = """
+      #{mic_text_formatted}
+      Status: #{state.status}
+
+      #{mic_input_formatted}  #{gemini_input_formatted}
+      #{waveforms}
+
+      #{input_prompt} #{state.input_buffer}█
+      #{controls_info_map}
+
+      #{history_section}\e[J
+      """
+
 
     term =
       state.term
@@ -384,13 +390,16 @@ defmodule Gemini.TermiteMicDemo.App do
     if input == "" do
       state
     else
-      {message, description} =
+      description =
         case input do
-          "/clear" -> {:reset_session, "Reset session"}
-          _input -> {{:text, input}, "Sent to Gemini: #{input}"}
+          "/clear" ->
+            Gemini.TermiteMicDemo.Pipeline.reset_session(state.pipeline_pid)
+            "Session reset"
+          _input ->
+            Gemini.TermiteMicDemo.Pipeline.submit_text(state.pipeline_pid, input)
+            "Sent to Gemini: #{input}"
         end
 
-      send(state.pipeline_pid, message)
       %{state | input_buffer: "", status: description}
     end
   end

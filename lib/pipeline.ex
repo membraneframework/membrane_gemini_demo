@@ -3,6 +3,14 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
 
   use Membrane.Pipeline
 
+  @spec reset_session(pipeline :: pid()) :: :reset_session
+  def reset_session(pipeline), do:
+    send(pipeline, :reset_session)
+
+  @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
+  def submit_text(pipeline, text), do:
+    send(pipeline, {:text, text})
+
   @impl true
   def handle_init(_ctx, opts) do
     tui_pid = Keyword.fetch!(opts, :tui_pid)
@@ -18,7 +26,7 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
         on_samples: fn samples -> send(tui_pid, {:mic_samples, samples}) end
       })
       |> via_in(:audio_input)
-      |> child(:gemini, %Membrane.Gemini.Bin{})
+      |> child(:gemini, Membrane.Gemini.Bin)
       |> child(:event_handler, %Membrane.Debug.Filter{
         handle_event: fn event -> handle_gemini_event(event, tui_pid) end
       })

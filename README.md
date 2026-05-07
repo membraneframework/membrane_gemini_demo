@@ -8,6 +8,7 @@ This repository contains an example chatbot app integrating the Google Live API 
 
 To run the demo:
 ```
+mix deps.get
 GEMINI_API_KEY="your API key" mix demo
 ```
 You can prompt Gemini via the text input field, or speak to it directly. Membrane will try using the default input device via [`membrane_portaudio_plugin`](https://github.com/membraneframework/membrane_portaudio_plugin). Press `m` to mute, `d` to show the event log, speech transcripts, etc. Send `/clear` via text prompt to reset the session context.

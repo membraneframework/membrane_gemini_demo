@@ -9,9 +9,12 @@ defmodule Gemini.TermiteMicDemo.App do
   @noise_floor 0.005
   @max_history 200
 
+  @type turn_kind :: :input | :output
+
   @type event_entry ::
           {:event, String.t()}
           | {:log, Logger.level(), String.t()}
+          | {:turn, turn_kind(), String.t()}
 
   @type t :: %__MODULE__{
           term: term(),
@@ -22,9 +25,8 @@ defmodule Gemini.TermiteMicDemo.App do
           muted: boolean(),
           mic_samples: [float()],
           gemini_samples: [float()],
-          input_transcript: String.t(),
-          output_transcript: String.t(),
-          thinking: String.t(),
+          input_pending_reset: boolean(),
+          output_pending_reset: boolean(),
           last_event: String.t(),
           event_history: [event_entry()]
         }
@@ -38,9 +40,8 @@ defmodule Gemini.TermiteMicDemo.App do
     muted: false,
     mic_samples: [],
     gemini_samples: [],
-    input_transcript: "",
-    output_transcript: "",
-    thinking: "",
+    input_pending_reset: false,
+    output_pending_reset: false,
     last_event: "",
     event_history: []
   ]
@@ -95,22 +96,25 @@ defmodule Gemini.TermiteMicDemo.App do
         %{state | gemini_samples: Enum.take(state.gemini_samples ++ samples, -200)} |> drain_mailbox()
 
       {:input_transcript, text} ->
-        entry = "Input:   #{text}"
-        %{state | input_transcript: text, last_event: entry} |> push_history({:event, entry}) |> drain_mailbox()
+        state |> push_turn(:input, text) |> drain_mailbox()
 
       {:output_transcript, text} ->
-        entry = "Output:  #{text}"
-        %{state | output_transcript: text, last_event: entry} |> push_history({:event, entry}) |> drain_mailbox()
+        state |> push_turn(:output, text) |> drain_mailbox()
 
       {:thinking, text} ->
         entry = "Thinking: #{text}"
-        %{state | thinking: text, last_event: "Thinking..."} |> push_history({:event, entry}) |> drain_mailbox()
+        %{state | last_event: "Thinking..."}
+        |> push_history({:event, entry})
+        |> drain_mailbox()
 
       {:event, text} ->
         %{state | last_event: text} |> push_history({:event, text}) |> drain_mailbox()
 
       :clear_transcripts ->
-        %{state | output_transcript: "", thinking: ""} |> drain_mailbox()
+        # ResponseStart: input's prior paragraph stays visible until the user
+        # speaks again; the next output delta starts a fresh Gemini paragraph.
+        %{state | input_pending_reset: true, output_pending_reset: true}
+        |> drain_mailbox()
 
       {:log, level, text} ->
         state |> push_history({:log, level, text}) |> drain_mailbox()
@@ -125,8 +129,6 @@ defmodule Gemini.TermiteMicDemo.App do
   defp handle_poll(state, {:data, <<127>>}), do: delete_char(state)
   defp handle_poll(state, {:data, <<23>>}), do: delete_word(state)
   defp handle_poll(state, {:data, <<21>>}), do: clear_buffer(state)
-  defp handle_poll(state, {:data, "d"}) when state.input_buffer == "", do: toggle_debug(state)
-  defp handle_poll(state, {:data, "m"}) when state.input_buffer == "", do: toggle_mute(state)
   defp handle_poll(state, {:data, char}) when byte_size(char) == 1, do: add_char(state, char)
   defp handle_poll(state, {:data, _data}), do: state
   defp handle_poll(state, {:signal, :winch}), do: %{state | term: Terminal.resize(state.term)}
@@ -147,31 +149,35 @@ defmodule Gemini.TermiteMicDemo.App do
     w = term_width(state)
     waveform_char_width = max(div(w - 4, 2), 10)
 
+    available_lines = max(term_height(state) - 23, 0)
+
+    entries =
+      state.event_history
+      |> Enum.reverse()
+      |> Enum.filter(fn
+        {:turn, _, _} -> true
+        _ -> state.debug_mode
+      end)
+      |> with_separators()
+      |> Enum.flat_map(&format_history_entry(w, &1))
+      |> Enum.take(-available_lines)
+
+    history_title = if state.debug_mode, do: "Transcript & Events", else: "Transcript"
+
     history_section =
-      if state.debug_mode do
-        available_lines = max(term_height(state) - 23, 0)
-
-        entries =
-          state.event_history
-          |> Enum.reverse()
-          |> with_separators()
-          |> Enum.flat_map(&format_history_entry(w, &1))
-          |> Enum.take(-available_lines)
-
-        (Style.bold()
-         |> Style.foreground(6)
-         |> Style.render_to_string("── Event History #{String.duplicate("─", max(w - 18, 0))}\n")) <>
-          Enum.join(entries)
-      else
-        ""
-      end
+      (Style.bold()
+       |> Style.foreground(6)
+       |> Style.render_to_string(
+         "── #{history_title} #{String.duplicate("─", max(w - String.length(history_title) - 4, 0))}\n"
+       )) <>
+        Enum.join(entries)
 
       mic_text_formatted = (Style.bold() |> Style.foreground(color) |> Style.render_to_string("#{mic_text}\n"))
       mic_input_formatted = (Style.foreground(6) |> Style.render_to_string("Mic Input"))
       gemini_input_formatted = (Style.foreground(5) |> Style.render_to_string("Gemini\n"))
       waveforms = render_waveforms(state.mic_samples, state.gemini_samples, waveform_char_width)
       input_prompt = (Style.bold() |> Style.render_to_string("gemini> "))
-      controls_info_map = Style.foreground(4) |> Style.render_to_string("m=mute | d=debug")
+      controls_info_map = Style.foreground(4) |> Style.render_to_string("/mute | /debug | /clear")
 
       frame = """
       #{mic_text_formatted}
@@ -199,6 +205,28 @@ defmodule Gemini.TermiteMicDemo.App do
   defp push_history(%__MODULE__{} = state, entry),
     do: %{state | event_history: Enum.take([entry | state.event_history], @max_history)}
 
+  @spec push_turn(t(), turn_kind(), String.t()) :: t()
+  defp push_turn(%__MODULE__{} = state, kind, delta) do
+    pending_field = pending_reset_field(kind)
+    pending = Map.fetch!(state, pending_field)
+    state = Map.put(state, pending_field, false)
+    last_event = "#{turn_label(kind)}#{delta}"
+
+    case {pending, state.event_history} do
+      {false, [{:turn, ^kind, prev} | rest]} ->
+        %{state |
+          event_history: [{:turn, kind, prev <> delta} | rest],
+          last_event: last_event}
+
+      _ ->
+        push_history(%{state | last_event: last_event}, {:turn, kind, delta})
+    end
+  end
+
+  @spec pending_reset_field(turn_kind()) :: atom()
+  defp pending_reset_field(:input), do: :input_pending_reset
+  defp pending_reset_field(:output), do: :output_pending_reset
+
   @spec with_separators([event_entry() | :separator]) :: [event_entry() | :separator]
   defp with_separators([]), do: []
   defp with_separators([_entry] = list), do: list
@@ -209,9 +237,18 @@ defmodule Gemini.TermiteMicDemo.App do
       else: [a | with_separators([b | rest])]
   end
 
-  @spec entry_kind(event_entry()) :: :log | :event
+  @spec entry_kind(event_entry()) :: :log | :event | :turn
   defp entry_kind({:log, _level, _text}), do: :log
   defp entry_kind({:event, _text}), do: :event
+  defp entry_kind({:turn, _kind, _text}), do: :turn
+
+  @spec turn_label(turn_kind()) :: String.t()
+  defp turn_label(:input), do: "You:    "
+  defp turn_label(:output), do: "Gemini: "
+
+  @spec turn_color(turn_kind()) :: pos_integer()
+  defp turn_color(:input), do: 6
+  defp turn_color(:output), do: 5
 
   @spec format_history_entry(pos_integer(), event_entry() | :separator) :: [iodata()]
   defp format_history_entry(_w, :separator), do: ["\n"]
@@ -221,6 +258,22 @@ defmodule Gemini.TermiteMicDemo.App do
     |> String.replace("\n", " ")
     |> chunk_text(max(w - 2, 1))
     |> Enum.map(&[Style.foreground(2) |> Style.render_to_string("  " <> &1), "\n"])
+  end
+
+  defp format_history_entry(w, {:turn, kind, text}) do
+    label = turn_label(kind)
+    color = turn_color(kind)
+    prefix = "  " <> label
+    indent = String.duplicate(" ", String.length(prefix))
+
+    text
+    |> String.replace("\n", " ")
+    |> chunk_text(max(w - String.length(prefix), 1))
+    |> Enum.with_index()
+    |> Enum.map(fn {chunk, i} ->
+      lead = if i == 0, do: prefix, else: indent
+      [Style.foreground(color) |> Style.render_to_string(lead <> chunk), "\n"]
+    end)
   end
 
   defp format_history_entry(w, {:log, level, text}) do
@@ -345,7 +398,10 @@ defmodule Gemini.TermiteMicDemo.App do
   defp mic_status_info(true), do: {1, "MIC MUTED - Microphone is silenced"}
 
   @spec toggle_debug(t()) :: t()
-  defp toggle_debug(%__MODULE__{} = state), do: %{state | debug_mode: !state.debug_mode}
+  defp toggle_debug(%__MODULE__{} = state) do
+    new_debug = !state.debug_mode
+    %{state | debug_mode: new_debug, status: if(new_debug, do: "Debug on", else: "Debug off")}
+  end
 
   @spec toggle_mute(t()) :: t()
   defp toggle_mute(%__MODULE__{} = state) do
@@ -387,20 +443,33 @@ defmodule Gemini.TermiteMicDemo.App do
   defp handle_submit(%__MODULE__{} = state) do
     input = String.trim(state.input_buffer)
 
-    if input == "" do
-      state
-    else
-      description =
-        case input do
-          "/clear" ->
-            Gemini.TermiteMicDemo.Pipeline.reset_session(state.pipeline_pid)
-            "Session reset"
-          _input ->
-            Gemini.TermiteMicDemo.Pipeline.submit_text(state.pipeline_pid, input)
-            "Sent to Gemini: #{input}"
-        end
+    cond do
+      input == "" ->
+        state
 
-      %{state | input_buffer: "", status: description}
+      String.starts_with?(input, "/") ->
+        handle_command(%{state | input_buffer: ""}, input)
+
+      true ->
+        Gemini.TermiteMicDemo.Pipeline.submit_text(state.pipeline_pid, input)
+        %{state | input_buffer: "", status: "Sent to Gemini: #{input}"}
     end
   end
+
+  @spec handle_command(t(), String.t()) :: t()
+  defp handle_command(%__MODULE__{} = state, "/clear") do
+    Gemini.TermiteMicDemo.Pipeline.reset_session(state.pipeline_pid)
+
+    %{state |
+      event_history: [],
+      input_pending_reset: false,
+      output_pending_reset: false,
+      status: "Session reset"}
+  end
+
+  defp handle_command(%__MODULE__{} = state, "/mute"), do: toggle_mute(state)
+  defp handle_command(%__MODULE__{} = state, "/debug"), do: toggle_debug(state)
+
+  defp handle_command(%__MODULE__{} = state, other),
+    do: %{state | status: "Unknown command: #{other}"}
 end

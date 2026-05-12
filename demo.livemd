@@ -1,0 +1,277 @@
+# Membrane Gemini Demo — WebRTC + Termite
+
+```elixir
+Mix.install(
+  [
+    {:membrane_gemini_demo, path: __DIR__, env: :dev}
+  ],
+  lockfile: :membrane_gemini_demo
+)
+```
+
+## API key
+
+```elixir
+api_key_input = Kino.Input.password("GEMINI_API_KEY")
+```
+
+```elixir
+System.put_env("GEMINI_API_KEY", Kino.Input.read(api_key_input))
+:ok
+```
+
+## WebRTC bridge
+
+A `Kino.JS.Live` cell hosts both peer connections in a single iframe so the
+browser's echo canceller sees mic capture and `<audio>` playback on the same
+page. The Elixir side acts as the JSON peer on two
+`Membrane.WebRTC.Signaling` channels — one for the Source (mic), one for the
+Sink (speaker) — and forwards messages to/from the JS over Kino's pubsub.
+Messages that arrive before a JS client has connected are buffered, so the
+sink's initial SDP offer is never lost.
+
+```elixir
+defmodule GeminiDemo.WebRTCBridge do
+  use Kino.JS
+  use Kino.JS.Live
+
+  alias Membrane.WebRTC.Signaling
+
+  def new(source_signaling, sink_signaling) do
+    Kino.JS.Live.new(__MODULE__, %{source: source_signaling, sink: sink_signaling})
+  end
+
+  @impl true
+  def init(%{source: source, sink: sink}, ctx) do
+    Signaling.register_peer(source, message_format: :json_data)
+    Signaling.register_peer(sink, message_format: :json_data)
+
+    {:ok,
+     assign(ctx,
+       source: source,
+       sink: sink,
+       source_queue: [],
+       sink_queue: [],
+       drained?: false
+     )}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    payload = %{
+      source_queue: Enum.reverse(ctx.assigns.source_queue),
+      sink_queue: Enum.reverse(ctx.assigns.sink_queue)
+    }
+
+    {:ok, payload, assign(ctx, source_queue: [], sink_queue: [], drained?: true)}
+  end
+
+  @impl true
+  def handle_event("signal_source", message, ctx) do
+    Signaling.signal(ctx.assigns.source, message)
+    {:noreply, ctx}
+  end
+
+  def handle_event("signal_sink", message, ctx) do
+    Signaling.signal(ctx.assigns.sink, message)
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_info({:membrane_webrtc_signaling, pid, message, _meta}, ctx) do
+    {channel, queue_key} =
+      cond do
+        pid == ctx.assigns.source.pid -> {"source_signal", :source_queue}
+        pid == ctx.assigns.sink.pid -> {"sink_signal", :sink_queue}
+      end
+
+    if ctx.assigns.drained? do
+      broadcast_event(ctx, channel, message)
+      {:noreply, ctx}
+    else
+      {:noreply, update(ctx, queue_key, &[message | &1])}
+    end
+  end
+
+  asset "main.js" do
+    """
+    export function init(ctx, initial) {
+      ctx.root.innerHTML = `
+        <div style="background:#111;color:#eee;font-family:monospace;padding:12px;border-radius:6px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button id="connect" style="background:#2a6;border:0;color:white;padding:6px 12px;border-radius:4px;cursor:pointer;">
+              Connect
+            </button>
+            <span id="status">Click Connect to grant mic access and start streaming.</span>
+          </div>
+          <audio id="player" autoplay style="display:none"></audio>
+        </div>
+      `;
+
+      const statusEl = ctx.root.querySelector("#status");
+      const audioEl = ctx.root.querySelector("#player");
+      const button = ctx.root.querySelector("#connect");
+      const setStatus = (msg) => { statusEl.textContent = msg; };
+
+      // Messages received from the server before the PCs are built get buffered here.
+      const queues = {
+        source: (initial && initial.source_queue) ? initial.source_queue.slice() : [],
+        sink: (initial && initial.sink_queue) ? initial.sink_queue.slice() : []
+      };
+      const pcs = {};
+
+      const handleSourceMsg = async (msg) => {
+        if (!pcs.source) { queues.source.push(msg); return; }
+        if (msg.type === "sdp_answer") {
+          await pcs.source.setRemoteDescription(msg.data);
+        } else if (msg.type === "ice_candidate") {
+          await pcs.source.addIceCandidate(msg.data);
+        }
+      };
+
+      const handleSinkMsg = async (msg) => {
+        if (!pcs.sink) { queues.sink.push(msg); return; }
+        if (msg.type === "sdp_offer") {
+          await pcs.sink.setRemoteDescription(msg.data);
+          const answer = await pcs.sink.createAnswer();
+          await pcs.sink.setLocalDescription(answer);
+          ctx.pushEvent("signal_sink", { type: "sdp_answer", data: answer });
+        } else if (msg.type === "ice_candidate") {
+          await pcs.sink.addIceCandidate(msg.data);
+        }
+      };
+
+      ctx.handleEvent("source_signal", handleSourceMsg);
+      ctx.handleEvent("sink_signal", handleSinkMsg);
+
+      button.onclick = async () => {
+        button.disabled = true;
+        button.style.opacity = "0.5";
+        try {
+          setStatus("Requesting mic access…");
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1
+            },
+            video: false
+          });
+
+          const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+
+          // Sink PC: server -> browser
+          pcs.sink = new RTCPeerConnection({ iceServers });
+          pcs.sink.onicecandidate = (ev) => {
+            if (ev.candidate) ctx.pushEvent("signal_sink", { type: "ice_candidate", data: ev.candidate });
+          };
+          audioEl.srcObject = new MediaStream();
+          pcs.sink.ontrack = (ev) => {
+            audioEl.srcObject.addTrack(ev.track);
+            audioEl.play().catch(() => {});
+          };
+
+          // Source PC: browser -> server
+          pcs.source = new RTCPeerConnection({ iceServers });
+          pcs.source.onicecandidate = (ev) => {
+            if (ev.candidate) ctx.pushEvent("signal_source", { type: "ice_candidate", data: ev.candidate });
+          };
+          for (const track of stream.getTracks()) pcs.source.addTrack(track, stream);
+
+          // Drain anything that arrived before the PCs existed (notably the sink's SDP offer).
+          for (const msg of queues.sink.splice(0)) await handleSinkMsg(msg);
+          for (const msg of queues.source.splice(0)) await handleSourceMsg(msg);
+
+          const offer = await pcs.source.createOffer();
+          await pcs.source.setLocalDescription(offer);
+          ctx.pushEvent("signal_source", { type: "sdp_offer", data: offer });
+
+          setStatus("Connected. Speak into your mic — Gemini is listening.");
+        } catch (err) {
+          setStatus("Error: " + ((err && err.message) || String(err)));
+          button.disabled = false;
+          button.style.opacity = "1";
+        }
+      };
+    }
+    """
+  end
+end
+```
+
+## Start the pipeline + TUI
+
+This cell owns the lifecycle: it kills any previous run, then spawns a runner
+that owns the signaling channels, the bridge widget, the KinoTermite terminal,
+and the Membrane pipeline. Both kinos are rendered side-by-side at the bottom
+of the cell.
+
+```elixir
+runner_name = :gemini_demo_app_runner
+
+case Process.whereis(runner_name) do
+  nil ->
+    :ok
+
+  pid ->
+    ref = Process.monitor(pid)
+    Process.exit(pid, :shutdown)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      5_000 -> :ok
+    end
+end
+
+parent = self()
+
+spawn(fn ->
+  Process.register(self(), runner_name)
+
+  source_signaling = Membrane.WebRTC.Signaling.new()
+  sink_signaling = Membrane.WebRTC.Signaling.new()
+
+  bridge = GeminiDemo.WebRTCBridge.new(source_signaling, sink_signaling)
+  send(parent, {:bridge_ready, bridge})
+
+  Gemini.TermiteMicDemo.App.start(
+    terminal_factory: fn ->
+      terminal = Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 60)
+      send(parent, {:terminal_ready, terminal})
+      terminal
+    end,
+    pipeline_opts: [
+      audio_io: :webrtc,
+      webrtc_source_signaling: source_signaling,
+      webrtc_sink_signaling: sink_signaling
+    ]
+  )
+end)
+
+bridge =
+  receive do
+    {:bridge_ready, b} -> b
+  after
+    5_000 -> raise "bridge never started"
+  end
+
+terminal =
+  receive do
+    {:terminal_ready, t} -> t
+  after
+    10_000 -> raise "terminal never started"
+  end
+
+Kino.Layout.grid([bridge, KinoTermite.output(terminal)], boxed: true)
+```
+
+After this cell runs, click **Connect** in the bridge panel and start talking.
+Keyboard shortcuts in the TUI:
+
+* `m` — mute / unmute the mic
+* `d` — toggle the debug event log
+* type a prompt and press Enter to send text to Gemini
+* `/clear` — reset the conversation

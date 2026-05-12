@@ -45,17 +45,24 @@ defmodule Gemini.TermiteMicDemo.App do
     event_history: []
   ]
 
-  @spec start() :: no_return()
-  def start do
+  @spec start(keyword()) :: no_return()
+  def start(opts \\ []) do
     tui_pid = self()
+    pipeline_opts = Keyword.get(opts, :pipeline_opts, [])
+    terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
 
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, Gemini.TermiteMicDemo.LoggerHandler, %{config: %{tui_pid: tui_pid}})
 
     {:ok, _supervisor, pipeline} =
-      Membrane.Pipeline.start_link(Gemini.TermiteMicDemo.Pipeline, tui_pid: tui_pid)
+      Membrane.Pipeline.start_link(
+        Gemini.TermiteMicDemo.Pipeline,
+        [tui_pid: tui_pid] ++ pipeline_opts
+      )
 
-    terminal = Terminal.start()
+    # The terminal MUST be created inside this process: adapters like
+    # KinoTermite capture `self()` to route keystroke messages back to us.
+    terminal = terminal_factory.()
 
     term =
       terminal
@@ -122,34 +129,27 @@ defmodule Gemini.TermiteMicDemo.App do
   defp handle_poll(state, {:data, "m"}) when state.input_buffer == "", do: toggle_mute(state)
   defp handle_poll(state, {:data, char}) when byte_size(char) == 1, do: add_char(state, char)
   defp handle_poll(state, {:data, _data}), do: state
+  defp handle_poll(state, {:signal, :winch}), do: %{state | term: Terminal.resize(state.term)}
   defp handle_poll(state, :timeout), do: state
   defp handle_poll(state, _other), do: state
 
-  @spec term_width() :: pos_integer()
-  defp term_width do
-    case :io.columns() do
-      {:ok, w} -> w
-      _error -> 80
-    end
-  end
+  @spec term_width(t()) :: pos_integer()
+  defp term_width(%__MODULE__{term: %{size: %{width: w}}}) when is_integer(w) and w > 0, do: w
+  defp term_width(_state), do: 80
 
-  @spec term_height() :: pos_integer()
-  defp term_height do
-    case :io.rows() do
-      {:ok, h} -> h
-      _error -> 24
-    end
-  end
+  @spec term_height(t()) :: pos_integer()
+  defp term_height(%__MODULE__{term: %{size: %{height: h}}}) when is_integer(h) and h > 0, do: h
+  defp term_height(_state), do: 24
 
   @spec render(t()) :: t()
   defp render(%__MODULE__{} = state) do
     {color, mic_text} = mic_status_info(state.muted)
-    w = term_width()
+    w = term_width(state)
     waveform_char_width = max(div(w - 4, 2), 10)
 
     history_section =
       if state.debug_mode do
-        available_lines = max(term_height() - 23, 0)
+        available_lines = max(term_height(state) - 23, 0)
 
         entries =
           state.event_history

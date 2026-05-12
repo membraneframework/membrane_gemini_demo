@@ -38,8 +38,15 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       {:membrane_gemini_plugin, "~> 0.1.1"},
       {:membrane_portaudio_plugin, ">= 0.0.0"},
       {:membrane_realtimer_plugin, "~> 0.10.1"},
+      {:membrane_webrtc_plugin, "~> 0.26.3"},
+      {:membrane_opus_plugin, "~> 0.20.6"},
+      {:membrane_ffmpeg_swresample_plugin, "~> 0.20.5"},
       {:membrane_raw_audio_parser_plugin, "~> 0.4.0"},
-      {:termite, "~> 0.4.0"},
+      {:kino_termite, "~> 0.1.0"},
+      # kino_termite locks termite to ~> 0.3.0, but 0.3.1 crashes prim_tty on
+      # OTP 28. Override to 0.4.x — the Termite.Terminal.Adapter behaviour
+      # API is unchanged, so the kino_termite adapter still compiles & runs.
+      {:termite, "~> 0.4.0", override: true},
       {:dialyxir, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, ">= 0.0.0", only: :dev, runtime: false}
     ]

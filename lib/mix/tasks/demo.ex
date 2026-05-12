@@ -11,6 +11,6 @@ defmodule Mix.Tasks.Demo do
 
   @spec run(any()) :: no_return()
   def run(_args) do
-    Gemini.TermiteMicDemo.App.start()
+    Gemini.TermiteMicDemo.App.start([])
   end
 end

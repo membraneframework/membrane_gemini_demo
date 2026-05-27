@@ -42,7 +42,7 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       {:membrane_opus_plugin, "~> 0.20.6"},
       {:membrane_ffmpeg_swresample_plugin, "~> 0.20.5"},
       {:membrane_raw_audio_parser_plugin, "~> 0.4.0"},
-      {:kino_termite, git: "https://github.com/kidq330/kino_termite.git", branch: "kidq330/adjustable_height"},
+      {:kino_termite, "~> 0.1.1"},
       {:termite, "~> 0.4.2"},
       {:dialyxir, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, ">= 0.0.0", only: :dev, runtime: false}

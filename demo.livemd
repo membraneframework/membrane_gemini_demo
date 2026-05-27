@@ -2,22 +2,21 @@
 
 ```elixir
 Mix.install(
-  [
-    {:membrane_gemini_demo, path: __DIR__, env: :dev}
-  ],
+  [{:membrane_gemini_demo, path: __DIR__, env: :dev}],
   lockfile: :membrane_gemini_demo
 )
-```
 
-## API key
+case System.fetch_env("LB_GEMINI_API_KEY") do
+  {:ok, api_key}
+    -> Application.put_env(:gemini_ex, :api_key, api_key)
 
-```elixir
-api_key_input = Kino.Input.password("GEMINI_API_KEY")
-```
+  :error
+    -> raise """
+      A key for the Gemini Live API is required to run this example.
+      Please set `GEMINI_API_KEY` in your livebook's SECRETS section.
+  """
+end
 
-```elixir
-System.put_env("GEMINI_API_KEY", Kino.Input.read(api_key_input))
-:ok
 ```
 
 ## WebRTC bridge
@@ -239,7 +238,7 @@ spawn(fn ->
 
   Gemini.TermiteMicDemo.App.start(
     terminal_factory: fn ->
-      terminal = Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 60)
+      terminal = Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 80)
       send(parent, {:terminal_ready, terminal})
       terminal
     end,

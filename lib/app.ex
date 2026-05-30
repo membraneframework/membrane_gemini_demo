@@ -46,10 +46,12 @@ defmodule Gemini.TermiteMicDemo.App do
     event_history: []
   ]
 
+  def send_samples(pid, samples, :gemini), do: send(pid, {:gemini_samples, samples})
+
   @spec start(keyword()) :: no_return()
-  def start(opts \\ []) do
+  def start(opts) do
     tui_pid = self()
-    pipeline_opts = Keyword.get(opts, :pipeline_opts, [])
+    spec_fn = Keyword.fetch!(opts, :spec_fn)
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
 
     :logger.remove_handler(:default)
@@ -58,8 +60,17 @@ defmodule Gemini.TermiteMicDemo.App do
     {:ok, _supervisor, pipeline} =
       Membrane.Pipeline.start_link(
         Gemini.TermiteMicDemo.Pipeline,
-        [tui_pid: tui_pid] ++ pipeline_opts
+        tui_pid: tui_pid,
+        spec_fn: spec_fn
       )
+
+    playing_timeout = 30_000
+    receive do
+      {:pipeline_playing, ^pipeline} -> :ok
+    after
+      playing_timeout ->
+        raise "pipeline did not reach :playing within #{playing_timeout}ms"
+    end
 
     # The terminal MUST be created inside this process: adapters like
     # KinoTermite capture `self()` to route keystroke messages back to us.
@@ -405,7 +416,7 @@ defmodule Gemini.TermiteMicDemo.App do
 
   @spec toggle_mute(t()) :: t()
   defp toggle_mute(%__MODULE__{} = state) do
-    send(state.pipeline_pid, :toggle_mute)
+    Gemini.TermiteMicDemo.Pipeline.toggle_mute(state.pipeline_pid)
     if state.muted do
       %{state | muted: false, status: "Mic unmuted"}
     else

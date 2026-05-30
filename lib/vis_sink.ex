@@ -38,4 +38,11 @@ defmodule Gemini.TermiteMicDemo.VisSink do
   end
 
   defp extract_samples(_binary, _count), do: []
+
+  @impl true
+  def handle_event(:input, event, _ctx, state) do
+    Membrane.Logger.warning("chuj #{inspect(event)}")
+    {[], state}
+  end
 end
+

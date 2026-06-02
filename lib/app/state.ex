@@ -1,12 +1,6 @@
 defmodule Gemini.TermiteMicDemo.App.State do
   @moduledoc """
   The TUI's view model and all of its pure rendering/update logic.
-
-  This holds everything that used to live directly in `Gemini.TermiteMicDemo.App`
-  back when the App was a hand-rolled receive loop. The App is now a GenServer
-  (a thin `%App{pid: pid()}` wrapper around it); this module is the `%State{}` it
-  carries and mutates. Functions here are pure: they take a `%State{}` and return
-  a new one (`render/1` additionally writes to the terminal as a side effect).
   """
 
   import Bitwise
@@ -55,15 +49,9 @@ defmodule Gemini.TermiteMicDemo.App.State do
     event_history: []
   ]
 
-  @doc "Build the initial state for a freshly-created terminal and running pipeline."
   @spec new(term(), pid()) :: t()
   def new(term, pipeline_pid), do: %__MODULE__{term: term, pipeline_pid: pipeline_pid}
 
-  @doc """
-  Apply a TUI message to the state. These are the tagged messages the App
-  GenServer receives via its public functions (`App.mic_samples/2`, etc.) and
-  that the old `drain_mailbox/1` used to pattern-match.
-  """
   @spec update(t(), tuple() | atom()) :: t()
   def update(%__MODULE__{} = state, {:mic_samples, samples}),
     do: %{state | mic_samples: Enum.take(state.mic_samples ++ samples, -@max_samples)}
@@ -94,12 +82,6 @@ defmodule Gemini.TermiteMicDemo.App.State do
   def update(%__MODULE__{} = state, {:log, level, text}),
     do: push_history(state, {:log, level, text})
 
-  @doc """
-  Apply a terminal poll result (keystroke / signal). These are the
-  `{reader_ref, payload}` messages the App GenServer receives from the
-  `Termite.Terminal` reader; `payload` has the shapes `Terminal.poll/2`
-  would otherwise return.
-  """
   @spec handle_input(t(), term()) :: t()
   def handle_input(state, {:data, "\r"}), do: handle_submit(state)
   def handle_input(state, {:data, "\n"}), do: handle_submit(state)
@@ -120,7 +102,6 @@ defmodule Gemini.TermiteMicDemo.App.State do
   defp term_height(%__MODULE__{term: %{size: %{height: h}}}) when is_integer(h) and h > 0, do: h
   defp term_height(_state), do: 24
 
-  @doc "Render the current state to the terminal, returning the updated state."
   @spec render(t()) :: t()
   def render(%__MODULE__{} = state) do
     {color, mic_text} = mic_status_info(state.muted)

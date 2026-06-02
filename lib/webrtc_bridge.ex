@@ -16,6 +16,32 @@ defmodule Gemini.TermiteMicDemo.WebRTCBridge do
 
   alias Membrane.WebRTC.Signaling
 
+  @spec await_connected(Kino.JS.Live.t()) :: :ok
+  def await_connected(bridge) do
+    Stream.resource(
+      fn ->
+        subscribe(bridge)
+        %{source?: false, sink?: false}
+      end,
+      fn
+        %{source?: true, sink?: true} ->
+          {:halt, :ok}
+
+        state ->
+          state = receive do
+            {:webrtc_bridge, "source", "connected"} -> %{state | source?: true}
+            {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
+            _other -> state
+          end
+          {[:ok], state}
+      end,
+      fn :ok -> :ok end
+    )
+    |> Stream.run()
+
+    :ok
+  end
+
   @spec new(Signaling.t(), Signaling.t()) :: Kino.JS.Live.t()
   def new(source_signaling, sink_signaling) do
     Kino.JS.Live.new(__MODULE__, %{source: source_signaling, sink: sink_signaling})
@@ -32,7 +58,9 @@ defmodule Gemini.TermiteMicDemo.WebRTCBridge do
        sink: sink,
        source_queue: [],
        sink_queue: [],
-       drained?: false
+       drained?: false,
+       subscribers: MapSet.new(),
+       peer_states: %{}
      )}
   end
 
@@ -57,6 +85,21 @@ defmodule Gemini.TermiteMicDemo.WebRTCBridge do
     {:noreply, ctx}
   end
 
+  def handle_event("peer_state", %{"peer" => peer, "state" => state}, ctx) do
+    ctx = update(ctx, :peer_states, &Map.put(&1, peer, state))
+
+    for pid <- ctx.assigns.subscribers, do: send(pid, {:webrtc_bridge, peer, state})
+
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_cast({:subscribe, pid}, ctx) do
+    for {peer, state} <- ctx.assigns.peer_states, do: send(pid, {:webrtc_bridge, peer, state})
+
+    {:noreply, update(ctx, :subscribers, &MapSet.put(&1, pid))}
+  end
+
   @impl true
   def handle_info({:membrane_webrtc_signaling, pid, message, _meta}, ctx) do
     {channel, queue_key} =
@@ -71,5 +114,10 @@ defmodule Gemini.TermiteMicDemo.WebRTCBridge do
     else
       {:noreply, update(ctx, queue_key, &[message | &1])}
     end
+  end
+
+  @spec subscribe(Kino.JS.Live.t(), pid()) :: :ok
+  defp subscribe(bridge, pid \\ self()) do
+    Kino.JS.Live.cast(bridge, {:subscribe, pid})
   end
 end

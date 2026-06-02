@@ -110,7 +110,7 @@ spec_fn = fn app, source_signaling, sink_signaling ->
 ```
 
 ```elixir
-Logger.configure(level: :debug)
+Logger.configure(level: :warning)
 
 runner_name = :gemini_demo_app_runner
 
@@ -131,13 +131,14 @@ end
 
 parent = self()
 
-spawn(fn ->
+spawn_link(fn ->
   Process.register(self(), runner_name)
 
   source_signaling = Membrane.WebRTC.Signaling.new()
   sink_signaling = Membrane.WebRTC.Signaling.new()
 
   bridge = TermiteMicDemo.WebRTCBridge.new(source_signaling, sink_signaling)
+
   send(parent, {:bridge_ready, bridge})
 
   app = TermiteMicDemo.App.new(
@@ -147,6 +148,8 @@ spawn(fn ->
 
   terminal = TermiteMicDemo.App.get_terminal(app)
   send(parent, {:terminal_ready, terminal})
+
+  TermiteMicDemo.WebRTCBridge.subscribe(bridge, parent)
   Process.sleep(:infinity)
   # __jm__ The wrapping `spawn` is only for cleanup purposes - think about how to structure this better
 end)
@@ -154,6 +157,7 @@ end)
 bridge = receive do
   {:bridge_ready, bridge} -> bridge
 end
+
 
 terminal =
   receive do
@@ -166,7 +170,16 @@ terminal =
 bridge
 ```
 
+Click `Connect` above and run the cell below to wait for the chatbot TUI to show up. You can speak with Gemini or send text messages using the chat prompt. Available chat commands:
+
+```
+/mute — mute / unmute the mic
+/debug — toggle the debug event log
+/clear — reset the conversation
+```
+
 ```elixir
+TermiteMicDemo.WebRTCBridge.await_connected(bridge)
 KinoTermite.output(terminal)
 ```
 
@@ -178,4 +191,4 @@ Keyboard shortcuts in the TUI:
 * type a prompt and press Enter to send text to Gemini
 * `/clear` — reset the conversation
 
-<!-- livebook:{"offset":5156,"stamp":{"token":"XCP.OEhtwogmNgX8MsgEnnuU5bs7MIle9A9Yzjp-U1qfcb0UmbQqkMOLjGddKSZgu5i7tTwcDPtoTOWC399ABm7vWj04uMQ6Ouc5uYXGao-ZjpGsKDQ4FnmhALI","version":2}} -->
+<!-- livebook:{"offset":5569,"stamp":{"token":"XCP.zcmGj7j8d47Cmia4LFfvHY6U3RJjAsvfAe9vr7pFPsBQC2VKGoPsrWAttW11LvXTdEjiVFHZM4Y2yXETfePQ358AAfPBydh9LcAmjG2Mer4_cLI1llk_ajY","version":2}} -->

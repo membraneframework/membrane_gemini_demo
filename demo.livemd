@@ -2,8 +2,13 @@
 
 ```elixir
 Mix.install(
-  [{:membrane_gemini_demo, path: __DIR__, env: :dev}],
-  lockfile: :membrane_gemini_demo
+  [
+    {:kino_termite, "~> 0.1.1"},
+    # {:membrane_ffmpeg_swresample_plugin, "~> 0.20.5"},
+    {:membrane_gemini_demo, path: __DIR__, env: :dev, override: true},
+    {:boombox, path: "/Users/kidq330/repos/work/membrane/boombox", override: true}
+  ]
+  # lockfile: :membrane_gemini_demo
 )
 
 case System.fetch_env("LB_GEMINI_API_KEY") do
@@ -40,24 +45,16 @@ import Membrane.ChildrenSpec
 import Membrane.Pad
 
 alias Gemini.TermiteMicDemo
-alias Membrane.{FFmpeg, RawAudio, WebRTC}
-
+alias Membrane.{FFmpeg, RawAudio}
 
 gemini_input_format = %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
-opus_sample_rate = 48_000
-opus_format = %RawAudio{sample_format: :s16le, channels: 1, sample_rate: opus_sample_rate}
 
-source_signaling = WebRTC.Signaling.new()
-  sink_signaling = WebRTC.Signaling.new()
-
-spec_fn = fn tui_pid ->
+spec_fn = fn tui_pid, source_signaling, sink_signaling ->
     [
       child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
       |> via_out(Membrane.Pad.ref(:output, :main_audio), options: [kind: :audio])
-      |> child(:opus_decoder, %Membrane.Opus.Decoder{sample_rate: opus_sample_rate})
-      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{
-        output_stream_format: gemini_input_format
-      })
+      |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: gemini_input_format})
+      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{output_stream_format: gemini_input_format})
       |> child(:mute_filter, TermiteMicDemo.MuteFilter)
       |> child(:mic_visualizer, %TermiteMicDemo.VisualizerBin{
         on_samples: fn samples -> send(tui_pid, {:mic_samples, samples}) end}
@@ -65,15 +62,12 @@ spec_fn = fn tui_pid ->
       |> via_in(:audio_input)
       |> child(:gemini, Membrane.Gemini.Bin)
       |> child(:event_handler, %Membrane.Debug.Filter{
-        handle_event: &Pipeline.handle_gemini_event(&1, tui_pid)
+        handle_event: &TermiteMicDemo.Pipeline.handle_gemini_event(&1, tui_pid)
       })
       |> child(:gemini_visualizer, %TermiteMicDemo.VisualizerBin{
         on_samples: fn samples -> send(tui_pid, {:gemini_samples, samples}) end
       })
-      |> child(:output_resampler, %Membrane.FFmpeg.SWResample.Converter{
-        output_stream_format: opus_format
-      })
-      |> child(:opus_encoder, %Membrane.Opus.Encoder{application: :voip})
+      |> child(:output_transcoder, %Membrane.Transcoder{output_stream_format: Membrane.Opus})
       |> via_in(Membrane.Pad.ref(:input, :main_audio), options: [kind: :audio])
       |> child(:webrtc_sink, %Membrane.WebRTC.Sink{
         signaling: sink_signaling,
@@ -90,11 +84,36 @@ spec_fn = fn tui_pid ->
 ```elixir
 Logger.configure(level: :debug)
 
+runner_name = :gemini_demo_app_runner
+
+case Process.whereis(runner_name) do
+  nil ->
+    :ok
+
+  pid ->
+    ref = Process.monitor(pid)
+    Process.exit(pid, :shutdown)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      5_000 -> :ok
+    end
+end
+
 parent = self()
 
-spawn_link(fn ->
-  TermiteMicDemo.App.start(
-    spec_fn: spec_fn,
+spawn(fn ->
+  Process.register(self(), runner_name)
+
+  source_signaling = Membrane.WebRTC.Signaling.new()
+  sink_signaling = Membrane.WebRTC.Signaling.new()
+
+  bridge = TermiteMicDemo.WebRTCBridge.new(source_signaling, sink_signaling)
+  send(parent, {:bridge_ready, bridge})
+
+  Gemini.TermiteMicDemo.App.start(
+    spec_fn: fn tui_pid -> spec_fn.(tui_pid, source_signaling, sink_signaling) end,
     terminal_factory: fn ->
       terminal = Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 40)
       send(parent, {:terminal_ready, terminal})
@@ -103,16 +122,9 @@ spawn_link(fn ->
   )
 end)
 
-spawn_link(fn ->
-  bridge = TermiteMicDemo.WebRTCBridge.new(source_signaling, sink_signaling)
-  send(parent, {:bridge, bridge})
-  Process.sleep(:infinity)
-end)
-
 bridge = receive do
-  {:bridge, bridge} -> bridge
+  {:bridge_ready, bridge} -> bridge
 end
-
 
 terminal =
   receive do
@@ -121,7 +133,12 @@ terminal =
     30_000 -> raise "terminal never started (did the pipeline reach :playing?)"
   end
 
+
 Kino.Layout.grid([bridge, KinoTermite.output(terminal)], boxed: true)
+```
+
+```elixir
+KinoMembrane.pipeline_dashboard(pipeline)
 ```
 
 After this cell runs, click **Connect** in the bridge panel and start talking.
@@ -132,4 +149,4 @@ Keyboard shortcuts in the TUI:
 * type a prompt and press Enter to send text to Gemini
 * `/clear` — reset the conversation
 
-<!-- livebook:{"offset":4179,"stamp":{"token":"XCP.AoYuajaXlMe0f3903iuwQxrhkiI6f7uHjSDbPzWrpcYTlYw8Av2Dnaigxsp4aZrtzznjUDuzorfnNcD_1_3do1DCzc_atOc9LrBwmQg9IuUgGEdFYmfq0rg","version":2}} -->
+<!-- livebook:{"offset":4611,"stamp":{"token":"XCP.viT4Zszrj-EG73O9vnVQNPteErhgzSQVTNPQoP0ocEYet772FcOJSrxu_87R415kwZjtGXnjQyhWdWqBlAvMdaFYX5sm71-EE73Rlh8OJdt5Q2h59rfNzaI","version":2}} -->

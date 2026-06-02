@@ -4,7 +4,7 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
 
   The pipeline does not know anything about the audio I/O: the caller
   builds the full `Membrane.ChildrenSpec` (using a `spec_fn` that captures
-  the TUI pid) and passes it in. The pipeline merely runs it and notifies
+  the `App` wrapper) and passes it in. The pipeline merely runs it and notifies
   the TUI process once it transitions to `:playing`, so the TUI can wait
   for playback before starting to feed user input.
 
@@ -24,49 +24,18 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
   @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
   def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
 
-  @doc """
-  Translate a Gemini bin event into a message for the TUI process.
-
-  Plugged in as the `:handle_event` callback of a `Membrane.Debug.Filter`
-  sitting downstream of the Gemini bin. Always returns the event so the
-  filter can forward it.
-  """
-  @spec handle_gemini_event(Membrane.Event.t(), pid()) :: Membrane.Event.t()
-  def handle_gemini_event(event, tui_pid) do
-    case event do
-      %Membrane.Gemini.Events.Transcript{text: text, audio_origin: :client} ->
-        send(tui_pid, {:input_transcript, text})
-
-      %Membrane.Gemini.Events.Transcript{text: text, audio_origin: :server} ->
-        send(tui_pid, {:output_transcript, text})
-
-      %Membrane.Gemini.Events.Thinking{text: text} ->
-        send(tui_pid, {:thinking, text})
-
-      %Membrane.Gemini.Events.ResponseStart{} ->
-        send(tui_pid, :clear_transcripts)
-        send(tui_pid, {:event, "Response started"})
-
-      %Membrane.Gemini.Events.ResponseEnd{interrupted?: interrupted?} ->
-        send(tui_pid, {:event, if(interrupted?, do: "Response interrupted", else: "Response complete")})
-
-      _event ->
-        :ok
-    end
-
-    event
-  end
-
   @impl true
   def handle_init(_ctx, opts) do
-    tui_pid = Keyword.fetch!(opts, :tui_pid)
+    app = Keyword.fetch!(opts, :app)
     spec_fn = Keyword.fetch!(opts, :spec_fn)
-    {[spec: spec_fn.(tui_pid)], %{tui_pid: tui_pid}}
+    {[spec: spec_fn.(app)], %{app: app}}
   end
 
   @impl true
   def handle_playing(_ctx, state) do
-    send(state.tui_pid, {:pipeline_playing, self()})
+    # Bootstrap handshake: a raw send the App's handle_continue/2 blocks on
+    # before creating the terminal (see App's moduledoc).
+    send(state.app.pid, {:pipeline_playing, self()})
     {[], state}
   end
 

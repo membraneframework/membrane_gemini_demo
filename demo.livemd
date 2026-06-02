@@ -4,9 +4,8 @@
 Mix.install(
   [
     {:kino_termite, "~> 0.1.1"},
-    # {:membrane_ffmpeg_swresample_plugin, "~> 0.20.5"},
-    {:membrane_gemini_demo, path: __DIR__, env: :dev, override: true},
-    {:boombox, path: "/Users/kidq330/repos/work/membrane/boombox", override: true}
+    {:membrane_transcoder_plugin, "~> 0.4.0"},
+    {:membrane_gemini_demo, path: __DIR__},
   ]
   # lockfile: :membrane_gemini_demo
 )
@@ -45,31 +44,60 @@ import Membrane.ChildrenSpec
 import Membrane.Pad
 
 alias Gemini.TermiteMicDemo
-alias Membrane.{FFmpeg, RawAudio}
+alias Membrane.RawAudio
+alias Membrane.{
+  FFmpeg.SWResample,
+  Gemini,
+  RawAudioParser,
+  Realtimer,
+  Tee,
+  Transcoder,
+  WebRTC
+}
+alias Membrane.Pad
 
 gemini_input_format = %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
 
-spec_fn = fn tui_pid, source_signaling, sink_signaling ->
+spec_fn = fn app, source_signaling, sink_signaling ->
     [
-      child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
-      |> via_out(Membrane.Pad.ref(:output, :main_audio), options: [kind: :audio])
-      |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: gemini_input_format})
-      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{output_stream_format: gemini_input_format})
+      child(:webrtc_source, %WebRTC.Source{signaling: source_signaling})
+      |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
+      |> child(:input_transcoder, %Transcoder{output_stream_format: gemini_input_format})
+      |> child(:input_resampler, %SWResample.Converter{output_stream_format: gemini_input_format})
       |> child(:mute_filter, TermiteMicDemo.MuteFilter)
-      |> child(:mic_visualizer, %TermiteMicDemo.VisualizerBin{
-        on_samples: fn samples -> send(tui_pid, {:mic_samples, samples}) end}
-      )
+      |> child(:mic_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
+      |> child(:mic_chunker, %TermiteMicDemo.ChunkerFilter{chunk_duration: Membrane.Time.milliseconds(40)})
+      |> child(:mic_tee, Tee),
+
+      get_child(:mic_tee)
+      |> via_out(Pad.ref(:output, :vis))
+      |> child(:mic_realtimer, Realtimer)
+      |> child(:mic_tui_sink, %TermiteMicDemo.TuiSink{
+        origin: :client,
+        app: app
+      }),
+
+      get_child(:mic_tee)
+      |> via_out(Pad.ref(:output, :main))
       |> via_in(:audio_input)
-      |> child(:gemini, Membrane.Gemini.Bin)
-      |> child(:event_handler, %Membrane.Debug.Filter{
-        handle_event: &TermiteMicDemo.Pipeline.handle_gemini_event(&1, tui_pid)
-      })
-      |> child(:gemini_visualizer, %TermiteMicDemo.VisualizerBin{
-        on_samples: fn samples -> send(tui_pid, {:gemini_samples, samples}) end
-      })
-      |> child(:output_transcoder, %Membrane.Transcoder{output_stream_format: Membrane.Opus})
-      |> via_in(Membrane.Pad.ref(:input, :main_audio), options: [kind: :audio])
-      |> child(:webrtc_sink, %Membrane.WebRTC.Sink{
+      |> child(:gemini, Gemini.Bin)
+      |> child(:gemini_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
+      |> child(:gemini_chunker, %TermiteMicDemo.ChunkerFilter{chunk_duration: Membrane.Time.milliseconds(40)})
+      |> child(:gemini_tee, Tee),
+
+      get_child(:gemini_tee)
+      |> via_out(Pad.ref(:output, :vis))
+      |> child(:gemini_realtimer, Realtimer)
+      |> child(:gemini_tui_sink, %TermiteMicDemo.TuiSink{
+        origin: :server,
+        app: app
+      }),
+
+      get_child(:gemini_tee)
+      |> via_out(Pad.ref(:output, :main))
+      |> child(:output_transcoder, %Transcoder{output_stream_format: Membrane.Opus})
+      |> via_in(Pad.ref(:input, :main_audio), options: [kind: :audio])
+      |> child(:webrtc_sink, %WebRTC.Sink{
         signaling: sink_signaling,
         tracks: [:audio]
       }),
@@ -112,14 +140,15 @@ spawn(fn ->
   bridge = TermiteMicDemo.WebRTCBridge.new(source_signaling, sink_signaling)
   send(parent, {:bridge_ready, bridge})
 
-  Gemini.TermiteMicDemo.App.start(
-    spec_fn: fn tui_pid -> spec_fn.(tui_pid, source_signaling, sink_signaling) end,
-    terminal_factory: fn ->
-      terminal = Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 40)
-      send(parent, {:terminal_ready, terminal})
-      terminal
-    end
+  app = TermiteMicDemo.App.new(
+    spec_fn: fn app -> spec_fn.(app, source_signaling, sink_signaling) end,
+    terminal_factory: fn -> Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 40) end
   )
+
+  terminal = TermiteMicDemo.App.get_terminal(app)
+  send(parent, {:terminal_ready, terminal})
+  Process.sleep(:infinity)
+  # __jm__ The wrapping `spawn` is only for cleanup purposes - think about how to structure this better
 end)
 
 bridge = receive do
@@ -134,11 +163,11 @@ terminal =
   end
 
 
-Kino.Layout.grid([bridge, KinoTermite.output(terminal)], boxed: true)
+bridge
 ```
 
 ```elixir
-KinoMembrane.pipeline_dashboard(pipeline)
+KinoTermite.output(terminal)
 ```
 
 After this cell runs, click **Connect** in the bridge panel and start talking.
@@ -149,4 +178,4 @@ Keyboard shortcuts in the TUI:
 * type a prompt and press Enter to send text to Gemini
 * `/clear` — reset the conversation
 
-<!-- livebook:{"offset":4611,"stamp":{"token":"XCP.viT4Zszrj-EG73O9vnVQNPteErhgzSQVTNPQoP0ocEYet772FcOJSrxu_87R415kwZjtGXnjQyhWdWqBlAvMdaFYX5sm71-EE73Rlh8OJdt5Q2h59rfNzaI","version":2}} -->
+<!-- livebook:{"offset":5156,"stamp":{"token":"XCP.OEhtwogmNgX8MsgEnnuU5bs7MIle9A9Yzjp-U1qfcb0UmbQqkMOLjGddKSZgu5i7tTwcDPtoTOWC399ABm7vWj04uMQ6Ouc5uYXGao-ZjpGsKDQ4FnmhALI","version":2}} -->

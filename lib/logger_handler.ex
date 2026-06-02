@@ -8,10 +8,13 @@ defmodule Gemini.TermiteMicDemo.LoggerHandler do
   def removing_handler(_config), do: :ok
 
   @spec log(
-          %{level: Logger.level(), msg: {:string, iodata()} | {:report, term()} | {:io.format(), [term()]}},
-          %{config: %{tui_pid: pid()}}
+          %{
+            level: Logger.level(),
+            msg: {:string, iodata()} | {:report, term()} | {:io.format(), [term()]}
+          },
+          %{config: %{app: Gemini.TermiteMicDemo.App.t()}}
         ) :: :ok
-  def log(%{level: level, msg: msg}, %{config: %{tui_pid: tui_pid}}) do
+  def log(%{level: level, msg: msg}, %{config: %{app: app}}) do
     text =
       case msg do
         {:string, iodata} -> IO.iodata_to_binary(iodata)
@@ -20,6 +23,6 @@ defmodule Gemini.TermiteMicDemo.LoggerHandler do
       end
       |> String.trim()
 
-    send(tui_pid, {:log, level, text})
+    Gemini.TermiteMicDemo.App.log(app, level, text)
   end
 end

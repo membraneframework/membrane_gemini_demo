@@ -81,14 +81,23 @@ defmodule Gemini.TermiteMicDemo.App do
   @impl true
   def init(opts) do
     app = %App{pid: self()}
-    spec_fn = Keyword.fetch!(opts, :spec_fn)
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
+    pipeline_mod = Keyword.get(opts, :pipeline, Pipeline)
+
+    # Whatever opts the caller didn't address to us are forwarded to the
+    # pipeline module (e.g. `spec_fn` for the shared `Pipeline`), always with
+    # the `App` wrapper injected. A pipeline that bakes in its own spec — like
+    # the native demo's — just needs `:app`.
+    pipeline_opts =
+      opts
+      |> Keyword.drop([:pipeline, :terminal_factory])
+      |> Keyword.put(:app, app)
 
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, LoggerHandler, %{config: %{app: app}})
 
     {:ok, _supervisor, pipeline} =
-      Membrane.Pipeline.start_link(Pipeline, app: app, spec_fn: spec_fn)
+      Membrane.Pipeline.start_link(pipeline_mod, pipeline_opts)
 
     {:ok, %{app: app, pipeline: pipeline, terminal_factory: terminal_factory},
      {:continue, :await_playing}}

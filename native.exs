@@ -44,12 +44,12 @@ defmodule Native.Pipeline do
   @moduledoc """
   The native (PortAudio) pipeline for the demo.
 
-  Same shape as `Gemini.TermiteMicDemo.Pipeline` — it notifies the TUI on
-  `:playing` and relays the `:text`/`:reset_session`/`:toggle_mute` control
-  messages to named children — but the audio I/O spec is baked into
-  `handle_init/2` rather than supplied via a `spec_fn`. The middle of the
-  pipeline (mute → chunk → tee → Gemini → tee) matches the inline WebRTC spec
-  in `demo.livemd`; only the ends differ (PortAudio source/sink here).
+  Same shape as the WebRTC pipeline `Gemini.TermiteMicDemo.Pipeline` defined in
+  `demo.livemd` — both bake their audio I/O spec into `handle_init/2`, notify
+  the TUI on `:playing`, relay the `:text`/`:reset_session`/`:toggle_mute`
+  control messages to named children, and expose the matching send-helpers the
+  TUI calls. The middle of the pipeline (mute → chunk → tee → Gemini → tee)
+  matches that WebRTC spec; only the ends differ (PortAudio source/sink here).
   """
 
   use Membrane.Pipeline
@@ -62,34 +62,19 @@ defmodule Native.Pipeline do
 
   @chunk_ms 40
 
+  @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
+  def submit_text(pipeline, text), do: send(pipeline, {:text, text})
+
+  @spec reset_session(pipeline :: pid()) :: :reset_session
+  def reset_session(pipeline), do: send(pipeline, :reset_session)
+
+  @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
+  def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
+
   @impl true
   def handle_init(_ctx, opts) do
-    app = Keyword.fetch!(opts, :app)
-    {[spec: spec(app)], %{app: app}}
-  end
-
-  @impl true
-  def handle_playing(_ctx, state) do
-    # Bootstrap handshake the App's handle_continue/2 blocks on before creating
-    # the terminal (see Gemini.TermiteMicDemo.App's moduledoc).
-    send(state.app.pid, {:pipeline_playing, self()})
-    {[], state}
-  end
-
-  @impl true
-  def handle_info({:text, _text} = msg, _ctx, state),
-    do: {[notify_child: {:text_source, msg}], state}
-
-  @impl true
-  def handle_info(:reset_session, _ctx, state),
-    do: {[notify_child: {:gemini, :reset_session}], state}
-
-  @impl true
-  def handle_info(:toggle_mute, _ctx, state),
-    do: {[notify_child: {:mute_filter, :toggle_mute}], state}
-
-  defp spec(app) do
-    [
+    TermiteMicDemo.App = app = Keyword.fetch!(opts, :app)
+    spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,
         channels: 1,
@@ -128,6 +113,30 @@ defmodule Native.Pipeline do
       |> via_in(:text_input)
       |> get_child(:gemini)
     ]
+    {[spec: spec], %{app: app}}
+  end
+
+  @impl true
+  def handle_playing(_ctx, state) do
+    # Bootstrap handshake the App's handle_continue/2 blocks on before creating
+    # the terminal (see Gemini.TermiteMicDemo.App's moduledoc).
+    send(state.app.pid, {:pipeline_playing, self()})
+    {[], state}
+  end
+
+  @impl true
+  def handle_info({:text, _text} = msg, _ctx, state),
+    do: {[notify_child: {:text_source, msg}], state}
+
+  @impl true
+  def handle_info(:reset_session, _ctx, state),
+    do: {[notify_child: {:gemini, :reset_session}], state}
+
+  @impl true
+  def handle_info(:toggle_mute, _ctx, state),
+    do: {[notify_child: {:mute_filter, :toggle_mute}], state}
+
+  defp spec(app) do
   end
 end
 

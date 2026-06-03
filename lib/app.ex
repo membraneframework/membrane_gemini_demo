@@ -21,7 +21,7 @@ defmodule Gemini.TermiteMicDemo.App do
 
   use GenServer
 
-  alias Gemini.TermiteMicDemo.{App, LoggerHandler, Pipeline}
+  alias Gemini.TermiteMicDemo.{App, LoggerHandler}
   alias Termite.{Screen, Terminal}
 
   @type t :: %__MODULE__{pid: pid()}
@@ -82,31 +82,27 @@ defmodule Gemini.TermiteMicDemo.App do
   def init(opts) do
     app = %App{pid: self()}
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
-    pipeline_mod = Keyword.get(opts, :pipeline, Pipeline)
-
-    # Whatever opts the caller didn't address to us are forwarded to the
-    # pipeline module (e.g. `spec_fn` for the shared `Pipeline`), always with
-    # the `App` wrapper injected. A pipeline that bakes in its own spec — like
-    # the native demo's — just needs `:app`.
-    pipeline_opts =
-      opts
-      |> Keyword.drop([:pipeline, :terminal_factory])
-      |> Keyword.put(:app, app)
+    pipeline_mod = Keyword.fetch!(opts, :pipeline)
 
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, LoggerHandler, %{config: %{app: app}})
 
     {:ok, _supervisor, pipeline} =
-      Membrane.Pipeline.start_link(pipeline_mod, pipeline_opts)
+      Membrane.Pipeline.start_link(pipeline_mod, app: app)
 
-    {:ok, %{app: app, pipeline: pipeline, terminal_factory: terminal_factory},
-     {:continue, :await_playing}}
+    {:ok,
+     %{
+       app: app,
+       pipeline: pipeline,
+       pipeline_mod: pipeline_mod,
+       terminal_factory: terminal_factory
+     }, {:continue, :await_playing}}
   end
 
   @impl true
   def handle_continue(
         :await_playing,
-        %{pipeline: pipeline, terminal_factory: terminal_factory} = g
+        %{pipeline: pipeline, pipeline_mod: pipeline_mod, terminal_factory: terminal_factory} = g
       ) do
     receive do
       {:pipeline_playing, ^pipeline} -> :ok
@@ -127,7 +123,7 @@ defmodule Gemini.TermiteMicDemo.App do
 
     Process.send_after(self(), :render_tick, @render_interval)
 
-    {:noreply, Map.merge(g, %{state: App.State.new(term, pipeline)})}
+    {:noreply, Map.merge(g, %{state: App.State.new(term, pipeline, pipeline_mod)})}
   end
 
   @impl true

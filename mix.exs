@@ -27,7 +27,6 @@ defmodule Membrane.Gemini.Demo.Mixfile do
 
   def application do
     [
-      mod: {Gemini.TermiteMicDemo.Application, []},
       extra_applications: [:logger]
     ]
   end

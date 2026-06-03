@@ -24,6 +24,7 @@ defmodule Gemini.TermiteMicDemo.App.State do
           input_buffer: String.t(),
           status: String.t(),
           pipeline_pid: pid(),
+          pipeline_mod: module(),
           debug_mode: boolean(),
           muted: boolean(),
           mic_samples: [float()],
@@ -37,6 +38,7 @@ defmodule Gemini.TermiteMicDemo.App.State do
   defstruct [
     :term,
     :pipeline_pid,
+    :pipeline_mod,
     input_buffer: "",
     status: "Ready. Speak into your mic or type text to send to Gemini.",
     debug_mode: false,
@@ -49,8 +51,9 @@ defmodule Gemini.TermiteMicDemo.App.State do
     event_history: []
   ]
 
-  @spec new(term(), pid()) :: t()
-  def new(term, pipeline_pid), do: %__MODULE__{term: term, pipeline_pid: pipeline_pid}
+  @spec new(term(), pid(), module()) :: t()
+  def new(term, pipeline_pid, pipeline_mod),
+    do: %__MODULE__{term: term, pipeline_pid: pipeline_pid, pipeline_mod: pipeline_mod}
 
   @spec update(t(), tuple() | atom()) :: t()
   def update(%__MODULE__{} = state, {:mic_samples, samples}),
@@ -363,7 +366,7 @@ defmodule Gemini.TermiteMicDemo.App.State do
 
   @spec toggle_mute(t()) :: t()
   defp toggle_mute(%__MODULE__{} = state) do
-    Gemini.TermiteMicDemo.Pipeline.toggle_mute(state.pipeline_pid)
+    state.pipeline_mod.toggle_mute(state.pipeline_pid)
 
     if state.muted do
       %{state | muted: false, status: "Mic unmuted"}
@@ -411,14 +414,14 @@ defmodule Gemini.TermiteMicDemo.App.State do
         handle_command(%{state | input_buffer: ""}, input)
 
       true ->
-        Gemini.TermiteMicDemo.Pipeline.submit_text(state.pipeline_pid, input)
+        state.pipeline_mod.submit_text(state.pipeline_pid, input)
         %{state | input_buffer: "", status: "Sent to Gemini: #{input}"}
     end
   end
 
   @spec handle_command(t(), String.t()) :: t()
   defp handle_command(%__MODULE__{} = state, "/clear") do
-    Gemini.TermiteMicDemo.Pipeline.reset_session(state.pipeline_pid)
+    state.pipeline_mod.reset_session(state.pipeline_pid)
 
     %{
       state

@@ -28,18 +28,10 @@ end
 `Membrane.LLM.Demo.WebRTCBridge` is a `Kino.JS.Live` widget that hosts both
 peer connections in one iframe (so the browser's echo canceller sees mic capture
 and `<audio>` playback on the same page) and relays signalling between the JS and
-the two `Membrane.WebRTC.Signaling` channels. It used to live in the mix project
-under `lib/`; moving the module here is what lets `mix.exs` drop `kino` and
-`membrane_webrtc_plugin`. Its JS asset still lives at `lib/assets/webrtc_bridge`.
+the two `Membrane.WebRTC.Signaling` channels.
 
 ```elixir
 defmodule Membrane.LLM.Demo.WebRTCBridge do
-  @moduledoc """
-  Kino widget that hosts both peer connections in a single iframe so the
-  browser's echo canceller sees mic capture and `<audio>` playback on the
-  same page.
-  """
-
   use Kino.JS, assets_path: Path.join(__DIR__, "lib/assets/webrtc_bridge")
   use Kino.JS.Live
 
@@ -159,8 +151,6 @@ The caller passes the two `Membrane.WebRTC.Signaling` channels via the
 `submit_text`/`reset_session`/`toggle_mute` send-helpers.
 
 ```elixir
-alias Membrane.LLM.Demo
-
 defmodule Membrane.LLM.Demo.Pipeline do
   @moduledoc """
   The WebRTC pipeline for the demo.
@@ -294,6 +284,8 @@ runner that creates the two signalling channels and the bridge widget, starts
 side-by-side with the terminal at the bottom of the cell.
 
 ```elixir
+alias Membrane.LLM.Demo
+
 Logger.configure(level: :warning)
 
 runner_name = :gemini_demo_app_runner
@@ -356,19 +348,14 @@ Click `Connect` above and run the cell below to wait for the chatbot TUI to show
 
 ```elixir
 AwaitBridge.await_connected(bridge)
-KinoTermite.output(  receive do
+
+KinoTermite.output(
+  receive do
     {:terminal_ready, t} -> t
   after
     30_000 -> raise "terminal never started (did the pipeline reach :playing?)"
-  end)
+  end
+)
 ```
 
-After this cell runs, click **Connect** in the bridge panel and start talking.
-Keyboard shortcuts in the TUI:
-
-* `m` — mute / unmute the mic
-* `d` — toggle the debug event log
-* type a prompt and press Enter to send text to Gemini
-* `/clear` — reset the conversation
-
-<!-- livebook:{"offset":9178,"stamp":{"token":"XCP.Y4UxxHan324Azc04CjjmapbWkxXiwKOj8IaxlmUYrJbqO5DClgIudLhU-BjwylQ3X7dLrGVCdOUdlJylGwmks0uRbUoZpOazbE657zRn2QcJ7uEs70ESOx4","version":2}} -->
+<!-- livebook:{"offset":10669,"stamp":{"token":"XCP.m2cezdA_FWWeIg_PjFn0GJFqhdekmNqJ5HvZdbGvilT-_ngecXl2F4FYYHz25aSq_Acqi9fd8pV9aOXI8B-FEF_1iM-PdB9G_tThcpiq4VLNI6yuW91t2dA","version":2}} -->

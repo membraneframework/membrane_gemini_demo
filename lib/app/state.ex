@@ -56,11 +56,11 @@ defmodule Membrane.LLM.Demo.App.State do
     do: %__MODULE__{terminal: terminal, pipeline_pid: pipeline_pid, pipeline_mod: pipeline_mod}
 
   @spec update(t(), tuple() | atom()) :: t()
-  def update(%__MODULE__{} = state, {:mic_samples, samples}),
-    do: %{state | mic_samples: Enum.take(state.mic_samples ++ samples, -@max_samples)}
+  def update(%__MODULE__{mic_samples: mic_samples} = state, {:mic_samples, samples}),
+    do: %{state | mic_samples: Enum.take(mic_samples ++ samples, -@max_samples)}
 
-  def update(%__MODULE__{} = state, {:gemini_samples, samples}),
-    do: %{state | gemini_samples: Enum.take(state.gemini_samples ++ samples, -@max_samples)}
+  def update(%__MODULE__{gemini_samples: gemini_samples} = state, {:gemini_samples, samples}),
+    do: %{state | gemini_samples: Enum.take(gemini_samples ++ samples, -@max_samples)}
 
   def update(%__MODULE__{} = state, {:input_transcript, text}),
     do: push_turn(state, :input, text)
@@ -113,25 +113,36 @@ defmodule Membrane.LLM.Demo.App.State do
   defp terminal_height(_state), do: 24
 
   @spec render(t()) :: t()
-  def render(%__MODULE__{} = state) do
-    {color, mic_text} = mic_status_info(state.muted)
+  def render(
+        %__MODULE__{
+          muted: muted,
+          debug_mode: debug_mode,
+          status: status,
+          mic_samples: mic_samples,
+          gemini_samples: gemini_samples,
+          input_buffer: input_buffer,
+          event_history: event_history,
+          terminal: terminal
+        } = state
+      ) do
+    {color, mic_text} = mic_status_info(muted)
     w = terminal_width(state)
     waveform_char_width = max(div(w - 4, 2), 10)
 
     available_lines = max(terminal_height(state) - 23, 0)
 
     entries =
-      state.event_history
+      event_history
       |> Enum.reverse()
       |> Enum.filter(fn
         {:turn, _, _} -> true
-        _ -> state.debug_mode
+        _ -> debug_mode
       end)
       |> with_separators()
       |> Enum.flat_map(&format_history_entry(w, &1))
       |> Enum.take(-available_lines)
 
-    history_title = if state.debug_mode, do: "Transcript & Events", else: "Transcript"
+    history_title = if debug_mode, do: "Transcript & Events", else: "Transcript"
 
     history_section =
       (Style.bold()
@@ -146,25 +157,25 @@ defmodule Membrane.LLM.Demo.App.State do
 
     mic_input_formatted = Style.foreground(6) |> Style.render_to_string("Mic Input")
     gemini_input_formatted = Style.foreground(5) |> Style.render_to_string("Gemini\n")
-    waveforms = render_waveforms(state.mic_samples, state.gemini_samples, waveform_char_width)
+    waveforms = render_waveforms(mic_samples, gemini_samples, waveform_char_width)
     input_prompt = Style.bold() |> Style.render_to_string("gemini> ")
     controls_info_map = Style.foreground(4) |> Style.render_to_string("/mute | /debug | /clear")
 
     frame = """
     #{mic_text_formatted}
-    Status: #{state.status}
+    Status: #{status}
 
     #{mic_input_formatted}  #{gemini_input_formatted}
     #{waveforms}
 
-    #{input_prompt} #{state.input_buffer}█
+    #{input_prompt} #{input_buffer}█
     #{controls_info_map}
 
     #{history_section}\e[J
     """
 
     terminal =
-      state.terminal
+      terminal
       |> Screen.run_escape_sequence(:cursor_move, [0, 0])
       |> Screen.write(String.replace(frame, "\n", "\e[K\n"))
 
@@ -172,17 +183,17 @@ defmodule Membrane.LLM.Demo.App.State do
   end
 
   @spec push_history(t(), event_entry()) :: t()
-  defp push_history(%__MODULE__{} = state, entry),
-    do: %{state | event_history: Enum.take([entry | state.event_history], @max_history)}
+  defp push_history(%__MODULE__{event_history: event_history} = state, entry),
+    do: %{state | event_history: Enum.take([entry | event_history], @max_history)}
 
   @spec push_turn(t(), turn_kind(), String.t()) :: t()
-  defp push_turn(%__MODULE__{} = state, kind, delta) do
+  defp push_turn(%__MODULE__{event_history: event_history} = state, kind, delta) do
     pending_field = pending_reset_field(kind)
     pending = Map.fetch!(state, pending_field)
     state = Map.put(state, pending_field, false)
     last_event = "#{turn_label(kind)}#{delta}"
 
-    case {pending, state.event_history} do
+    case {pending, event_history} do
       {false, [{:turn, ^kind, prev} | rest]} ->
         %{state | event_history: [{:turn, kind, prev <> delta} | rest], last_event: last_event}
 
@@ -366,16 +377,16 @@ defmodule Membrane.LLM.Demo.App.State do
   defp mic_status_info(true), do: {1, "MIC MUTED - Microphone is silenced"}
 
   @spec toggle_debug(t()) :: t()
-  defp toggle_debug(%__MODULE__{} = state) do
-    new_debug = !state.debug_mode
+  defp toggle_debug(%__MODULE__{debug_mode: debug_mode} = state) do
+    new_debug = !debug_mode
     %{state | debug_mode: new_debug, status: if(new_debug, do: "Debug on", else: "Debug off")}
   end
 
   @spec toggle_mute(t()) :: t()
-  defp toggle_mute(%__MODULE__{} = state) do
-    state.pipeline_mod.toggle_mute(state.pipeline_pid)
+  defp toggle_mute(%__MODULE__{pipeline_mod: mod, pipeline_pid: pid, muted: muted} = state) do
+    mod.toggle_mute(pid)
 
-    if state.muted do
+    if muted do
       %{state | muted: false, status: "Mic unmuted"}
     else
       %{state | muted: true, status: "Mic muted"}
@@ -383,13 +394,13 @@ defmodule Membrane.LLM.Demo.App.State do
   end
 
   @spec delete_char(t()) :: t()
-  defp delete_char(%__MODULE__{} = state),
-    do: %{state | input_buffer: String.slice(state.input_buffer, 0..-2//1)}
+  defp delete_char(%__MODULE__{input_buffer: input_buffer} = state),
+    do: %{state | input_buffer: String.slice(input_buffer, 0..-2//1)}
 
   @spec delete_word(t()) :: t()
-  defp delete_word(%__MODULE__{} = state) do
+  defp delete_word(%__MODULE__{input_buffer: input_buffer} = state) do
     new_buffer =
-      state.input_buffer
+      input_buffer
       |> String.trim_trailing()
       |> String.reverse()
       |> String.split(" ", parts: 2)
@@ -406,12 +417,14 @@ defmodule Membrane.LLM.Demo.App.State do
   defp clear_buffer(%__MODULE__{} = state), do: %{state | input_buffer: ""}
 
   @spec add_char(t(), String.t()) :: t()
-  defp add_char(%__MODULE__{} = state, char),
-    do: %{state | input_buffer: state.input_buffer <> char}
+  defp add_char(%__MODULE__{input_buffer: input_buffer} = state, char),
+    do: %{state | input_buffer: input_buffer <> char}
 
   @spec handle_submit(t()) :: t()
-  defp handle_submit(%__MODULE__{} = state) do
-    input = String.trim(state.input_buffer)
+  defp handle_submit(
+         %__MODULE__{input_buffer: input_buffer, pipeline_mod: mod, pipeline_pid: pid} = state
+       ) do
+    input = String.trim(input_buffer)
 
     cond do
       input == "" ->
@@ -421,14 +434,14 @@ defmodule Membrane.LLM.Demo.App.State do
         handle_command(%{state | input_buffer: ""}, input)
 
       true ->
-        state.pipeline_mod.submit_text(state.pipeline_pid, input)
+        mod.submit_text(pid, input)
         %{state | input_buffer: "", status: "Sent to Gemini: #{input}"}
     end
   end
 
   @spec handle_command(t(), String.t()) :: t()
-  defp handle_command(%__MODULE__{} = state, "/clear") do
-    state.pipeline_mod.reset_session(state.pipeline_pid)
+  defp handle_command(%__MODULE__{pipeline_mod: mod, pipeline_pid: pid} = state, "/clear") do
+    mod.reset_session(pid)
 
     %{
       state

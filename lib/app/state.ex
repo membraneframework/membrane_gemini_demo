@@ -20,7 +20,7 @@ defmodule Membrane.LLM.Demo.App.State do
           | {:turn, turn_kind(), String.t()}
 
   @type t :: %__MODULE__{
-          term: term(),
+          terminal: term(),
           input_buffer: String.t(),
           status: String.t(),
           pipeline_pid: pid(),
@@ -35,25 +35,25 @@ defmodule Membrane.LLM.Demo.App.State do
           event_history: [event_entry()]
         }
 
-  defstruct [
-    :term,
-    :pipeline_pid,
-    :pipeline_mod,
-    input_buffer: "",
-    status: "Ready. Speak into your mic or type text to send to Gemini.",
-    debug_mode: false,
-    muted: false,
-    mic_samples: [],
-    gemini_samples: [],
-    input_pending_reset: false,
-    output_pending_reset: false,
-    last_event: "",
-    event_history: []
-  ]
+  @enforce_keys [:terminal, :pipeline_pid, :pipeline_mod]
+
+  defstruct @enforce_keys ++
+              [
+                input_buffer: "",
+                status: "Ready. Speak into your mic or type text to send to Gemini.",
+                debug_mode: false,
+                muted: false,
+                mic_samples: [],
+                gemini_samples: [],
+                input_pending_reset: false,
+                output_pending_reset: false,
+                last_event: "",
+                event_history: []
+              ]
 
   @spec new(term(), pid(), module()) :: t()
-  def new(term, pipeline_pid, pipeline_mod),
-    do: %__MODULE__{term: term, pipeline_pid: pipeline_pid, pipeline_mod: pipeline_mod}
+  def new(terminal, pipeline_pid, pipeline_mod),
+    do: %__MODULE__{terminal: terminal, pipeline_pid: pipeline_pid, pipeline_mod: pipeline_mod}
 
   @spec update(t(), tuple() | atom()) :: t()
   def update(%__MODULE__{} = state, {:mic_samples, samples}),
@@ -93,25 +93,32 @@ defmodule Membrane.LLM.Demo.App.State do
   def handle_input(state, {:data, <<21>>}), do: clear_buffer(state)
   def handle_input(state, {:data, char}) when byte_size(char) == 1, do: add_char(state, char)
   def handle_input(state, {:data, _data}), do: state
-  def handle_input(state, {:signal, :winch}), do: %{state | term: Terminal.resize(state.term)}
+
+  def handle_input(state, {:signal, :winch}),
+    do: %{state | terminal: Terminal.resize(state.terminal)}
+
   def handle_input(state, :timeout), do: state
   def handle_input(state, _other), do: state
 
-  @spec term_width(t()) :: pos_integer()
-  defp term_width(%__MODULE__{term: %{size: %{width: w}}}) when is_integer(w) and w > 0, do: w
-  defp term_width(_state), do: 80
+  @spec terminal_width(t()) :: pos_integer()
+  defp terminal_width(%__MODULE__{terminal: %{size: %{width: w}}}) when is_integer(w) and w > 0,
+    do: w
 
-  @spec term_height(t()) :: pos_integer()
-  defp term_height(%__MODULE__{term: %{size: %{height: h}}}) when is_integer(h) and h > 0, do: h
-  defp term_height(_state), do: 24
+  defp terminal_width(_state), do: 80
+
+  @spec terminal_height(t()) :: pos_integer()
+  defp terminal_height(%__MODULE__{terminal: %{size: %{height: h}}}) when is_integer(h) and h > 0,
+    do: h
+
+  defp terminal_height(_state), do: 24
 
   @spec render(t()) :: t()
   def render(%__MODULE__{} = state) do
     {color, mic_text} = mic_status_info(state.muted)
-    w = term_width(state)
+    w = terminal_width(state)
     waveform_char_width = max(div(w - 4, 2), 10)
 
-    available_lines = max(term_height(state) - 23, 0)
+    available_lines = max(terminal_height(state) - 23, 0)
 
     entries =
       state.event_history
@@ -156,12 +163,12 @@ defmodule Membrane.LLM.Demo.App.State do
     #{history_section}\e[J
     """
 
-    term =
-      state.term
+    terminal =
+      state.terminal
       |> Screen.run_escape_sequence(:cursor_move, [0, 0])
       |> Screen.write(String.replace(frame, "\n", "\e[K\n"))
 
-    %{state | term: term}
+    %{state | terminal: terminal}
   end
 
   @spec push_history(t(), event_entry()) :: t()

@@ -1,4 +1,4 @@
-defmodule Membrane.LLM.Demo.ChunkerFilter do
+defmodule Membrane.LLM.Demo.ChunkFilter do
   @moduledoc false
 
   use Membrane.Filter

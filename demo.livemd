@@ -215,10 +215,8 @@ defmodule Membrane.LLM.Demo.Pipeline do
   end
 
   @impl true
-  def handle_playing(_ctx, state) do
-    # Bootstrap handshake the App's handle_continue/2 blocks on before creating
-    # the terminal (see Membrane.LLM.Demo.App's moduledoc).
-    send(state.app.pid, {:pipeline_playing, self()})
+  def handle_playing(_ctx, %{app: app} = state) do
+    Demo.App.signal_pipeline_playing(app)
     {[], state}
   end
 
@@ -244,7 +242,7 @@ defmodule Membrane.LLM.Demo.Pipeline do
       |> child(:input_resampler, %SWResample.Converter{output_stream_format: @gemini_input_format})
       |> child(:mute_filter, Demo.MuteFilter)
       |> child(:mic_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %Demo.ChunkerFilter{
+      |> child(:mic_chunker, %Demo.ChunkFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:mic_tee, Tee)
@@ -252,7 +250,7 @@ defmodule Membrane.LLM.Demo.Pipeline do
       |> via_in(:audio_input)
       |> child(:gemini, Gemini.Bin)
       |> child(:gemini_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %Demo.ChunkerFilter{
+      |> child(:gemini_chunker, %Demo.ChunkFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:gemini_tee, Tee)

@@ -11,6 +11,10 @@ defmodule Membrane.LLM.Demo.App do
   @render_interval 50
   @playing_timeout 30_000
 
+  @spec signal_pipeline_playing(t(), pid()) :: :ok
+  def signal_pipeline_playing(%App{pid: pid}, pipeline \\ self()),
+    do: send(pid, {:pipeline_playing, pipeline})
+
   @spec mic_samples(t(), [float()]) :: :ok
   def mic_samples(%App{pid: pid}, samples), do: GenServer.cast(pid, {:mic_samples, samples})
 
@@ -70,7 +74,7 @@ defmodule Membrane.LLM.Demo.App do
     # KinoTermite capture `self()` to route keystroke messages back to us.
     terminal = terminal_factory.()
 
-    term =
+    terminal =
       terminal
       |> Screen.run_escape_sequence(:screen_alt)
       |> Screen.run_escape_sequence(:cursor_hide)
@@ -78,7 +82,7 @@ defmodule Membrane.LLM.Demo.App do
 
     Process.send_after(self(), :render_tick, @render_interval)
 
-    {:ok, App.State.new(term, pipeline, pipeline_mod)}
+    {:ok, App.State.new(terminal, pipeline, pipeline_mod)}
   end
 
   @impl true
@@ -86,13 +90,13 @@ defmodule Membrane.LLM.Demo.App do
     do: {:noreply, App.State.update(state, msg)}
 
   @impl true
-  def handle_call(:get_terminal, _from, %App.State{term: term} = state),
-    do: {:reply, term, state}
+  def handle_call(:get_terminal, _from, %App.State{terminal: terminal} = state),
+    do: {:reply, terminal, state}
 
   @impl true
   def handle_info(
         {reader, payload},
-        %App.State{term: %Terminal{reader: reader}} = state
+        %App.State{terminal: %Terminal{reader: reader}} = state
       ) do
     {:noreply, App.State.handle_input(state, payload)}
   end

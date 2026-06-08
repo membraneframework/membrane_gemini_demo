@@ -239,9 +239,7 @@ defmodule Membrane.LLM.Demo.Pipeline do
 
   @impl true
   def handle_playing(_ctx, %{app: app} = state) do
-    IO.puts("handle_playing")
     Demo.App.signal_pipeline_playing(app)
-    IO.puts("handle_playing end")
     {[], state}
   end
 
@@ -298,7 +296,7 @@ directly in the cell and rendered as the cell result.
 ```elixir
 alias Membrane.LLM.Demo
 
-Logger.configure(level: :warning)
+Logger.configure(level: :debug)
 
 source_signaling = Membrane.WebRTC.Signaling.new()
 sink_signaling = Membrane.WebRTC.Signaling.new()
@@ -314,6 +312,17 @@ bridge = Demo.WebRTCBridge.new(source_signaling, sink_signaling)
     restart: :temporary
   })
 
+{:ok, app_pid} =
+  Kino.start_child(
+    Supervisor.child_spec(
+      {Demo.App,
+       pipeline_pid: pipeline,
+       pipeline_mod: Demo.Pipeline,
+       terminal_factory: fn -> Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 50) end},
+      restart: :temporary
+    )
+  )
+
 bridge
 ```
 
@@ -328,19 +337,8 @@ Click `Connect` above and run the cell below to wait for the chatbot TUI to show
 ```elixir
 AwaitBridge.await_connected(bridge)
 
-{:ok, app_pid} =
-  Kino.start_child(
-    Supervisor.child_spec(
-      {Demo.App,
-       pipeline_pid: pipeline,
-       pipeline_mod: Demo.Pipeline,
-       terminal_factory: fn -> Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 40) end},
-      restart: :temporary
-    )
-  )
-
 terminal = Demo.App.get_terminal(%Demo.App{pid: app_pid})
 KinoTermite.output(terminal)
 ```
 
-<!-- livebook:{"offset":10675,"stamp":{"token":"XCP.foQxEBtzIzfpWVBUMQ_L6S2yx-fQ4OXW5nKxQfh1FuhDXBRIQtjQgliqZEPzgNO5DjWE6xIpJ7R65GyBw9oJm5k771kh-cJXNsFH_tDHldzAbpVL7pP_ThQ","version":2}} -->
+<!-- livebook:{"offset":10609,"stamp":{"token":"XCP.sS5iLGcAn5RnL_S_S-2YcQHawE_kttlr2lf1sVl940U9wcGmVY8r-iHFU2YHC6w255tDR3S3yMpPN79RAIRrvSFPLWSr3dMlCN-kgJHcD27LzUyoFjdG0fI","version":2}} -->

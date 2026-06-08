@@ -190,17 +190,46 @@ defmodule Membrane.LLM.Demo.App.State do
   defp push_turn(%__MODULE__{event_history: event_history} = state, kind, delta) do
     pending_field = pending_reset_field(kind)
     pending = Map.fetch!(state, pending_field)
-    state = Map.put(state, pending_field, false)
-    last_event = "#{turn_label(kind)}#{delta}"
 
-    case {pending, event_history} do
-      {false, [{:turn, ^kind, prev} | rest]} ->
-        %{state | event_history: [{:turn, kind, prev <> delta} | rest], last_event: last_event}
+    state =
+      state
+      |> Map.put(pending_field, false)
+      |> Map.put(:last_event, "#{turn_label(kind)}#{delta}")
+
+    # With debug off, extend the most recent turn of this kind even when
+    # log/event entries have since been pushed on top of it: those entries are
+    # hidden, so matching only the history head would fragment the transcript
+    # depending on whether (and at which level) a log happened to fire between
+    # deltas. With debug on the entries are visible, so we keep deltas separate
+    # to leave the transcript interleaved with logs in chronological order
+    # rather than collapsed into one block that scrolls the logs out of view.
+    split = if state.debug_mode, do: split_head_turn(event_history), else: split_last_turn(event_history)
+
+    case {pending, split} do
+      {false, {newer, {:turn, ^kind, prev}, older}} ->
+        %{state | event_history: newer ++ [{:turn, kind, prev <> delta} | older]}
 
       _ ->
-        push_history(%{state | last_event: last_event}, {:turn, kind, delta})
+        push_history(state, {:turn, kind, delta})
     end
   end
+
+  @typep turn_split :: {[event_entry()], event_entry() | nil, [event_entry()]}
+
+  @spec split_head_turn([event_entry()]) :: turn_split()
+  defp split_head_turn([{:turn, _, _} = turn | older]), do: {[], turn, older}
+  defp split_head_turn(history), do: {[], nil, history}
+
+  @spec split_last_turn([event_entry()], [event_entry()]) :: turn_split()
+  defp split_last_turn(history, newer \\ [])
+
+  defp split_last_turn([{:turn, _, _} = turn | older], newer),
+    do: {Enum.reverse(newer), turn, older}
+
+  defp split_last_turn([entry | rest], newer),
+    do: split_last_turn(rest, [entry | newer])
+
+  defp split_last_turn([], newer), do: {Enum.reverse(newer), nil, []}
 
   @spec pending_reset_field(turn_kind()) :: atom()
   defp pending_reset_field(:input), do: :input_pending_reset
@@ -435,7 +464,9 @@ defmodule Membrane.LLM.Demo.App.State do
 
       true ->
         mod.submit_text(pid, input)
-        %{state | input_buffer: "", status: "Sent to Gemini: #{input}"}
+
+        %{state | input_buffer: "", status: "Sent to Gemini: #{input}", input_pending_reset: true}
+        |> push_history({:turn, :input, input})
     end
   end
 

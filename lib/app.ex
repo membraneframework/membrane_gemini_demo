@@ -1,24 +1,5 @@
 defmodule Gemini.TermiteMicDemo.App do
-  @moduledoc """
-  The TUI application, as a GenServer.
-
-  `%App{}` is a thin wrapper around the server pid. The server's internal
-  bookkeeping is `%{app:, reader:, pipeline:, state:}`, where `state` is the
-  `Gemini.TermiteMicDemo.App.State` view model (don't confuse the wrapper
-  struct, the bookkeeping map, and the `%State{}`).
-
-  All messages the server reacts to arrive through the public functions below
-  (each takes the `%App{}` wrapper and casts), rather than via raw `send/2`.
-  The one exception is the `{:pipeline_playing, pid}` bootstrap handshake: the
-  pipeline `send/2`s it directly so `handle_continue/2` can block on it before
-  the terminal is created — this preserves "the TUI only appears once the
-  pipeline is `:playing`" and the start-up timeout.
-
-  Terminal input is the other thing that arrives as raw messages: the
-  `Termite.Terminal` reader sends `{reader_ref, payload}` to this process, which
-  `handle_info/2` forwards to `State.handle_input/2`.
-  """
-
+  @moduledoc false
   use GenServer
 
   alias Gemini.TermiteMicDemo.{App, LoggerHandler}
@@ -57,18 +38,6 @@ defmodule Gemini.TermiteMicDemo.App do
   @spec get_terminal(t()) :: struct()
   def get_terminal(%App{pid: pid}), do: GenServer.call(pid, :get_terminal)
 
-  # defmodule State do
-  #   @type t :: %__MODULE__{
-  #           app: App.t(),
-  #           pipeline: pid(),
-  #           terminal_factory: (-> struct()),
-  #           state: App.State.t() | nil,
-  #         }
-
-  #   @enforce_keys [:app, :pipeline, :terminal_factory]
-  #   defstruct @enforce_keys ++ [:state]
-  # end
-
   @spec start_link(keyword()) :: {:ok, pid()}
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
 
@@ -90,20 +59,6 @@ defmodule Gemini.TermiteMicDemo.App do
     {:ok, _supervisor, pipeline} =
       Membrane.Pipeline.start_link(pipeline_mod, app: app)
 
-    {:ok,
-     %{
-       app: app,
-       pipeline: pipeline,
-       pipeline_mod: pipeline_mod,
-       terminal_factory: terminal_factory
-     }, {:continue, :await_playing}}
-  end
-
-  @impl true
-  def handle_continue(
-        :await_playing,
-        %{pipeline: pipeline, pipeline_mod: pipeline_mod, terminal_factory: terminal_factory} = g
-      ) do
     receive do
       {:pipeline_playing, ^pipeline} -> :ok
     after
@@ -123,29 +78,29 @@ defmodule Gemini.TermiteMicDemo.App do
 
     Process.send_after(self(), :render_tick, @render_interval)
 
-    {:noreply, Map.merge(g, %{state: App.State.new(term, pipeline, pipeline_mod)})}
+    {:ok, App.State.new(term, pipeline, pipeline_mod)}
   end
 
   @impl true
-  def handle_cast(msg, %{state: state} = g),
-    do: {:noreply, %{g | state: App.State.update(state, msg)}}
+  def handle_cast(msg, state),
+    do: {:noreply, App.State.update(state, msg)}
 
   @impl true
-  def handle_call(:get_terminal, _from, %{state: %App.State{term: term}} = state),
+  def handle_call(:get_terminal, _from, %App.State{term: term} = state),
     do: {:reply, term, state}
 
   @impl true
   def handle_info(
         {reader, payload},
-        %{state: %App.State{term: %Terminal{reader: reader}} = state} = g
+        %App.State{term: %Terminal{reader: reader}} = state
       ) do
-    {:noreply, %{g | state: App.State.handle_input(state, payload)}}
+    {:noreply, App.State.handle_input(state, payload)}
   end
 
-  def handle_info(:render_tick, %{state: state} = g) do
+  def handle_info(:render_tick, state) do
     Process.send_after(self(), :render_tick, @render_interval)
-    {:noreply, %{g | state: App.State.render(state)}}
+    {:noreply, App.State.render(state)}
   end
 
-  def handle_info(_msg, g), do: {:noreply, g}
+  def handle_info(_msg, state), do: {:noreply, state}
 end

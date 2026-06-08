@@ -73,7 +73,7 @@ defmodule Native.Pipeline do
 
   @impl true
   def handle_init(_ctx, opts) do
-    TermiteMicDemo.App = app = Keyword.fetch!(opts, :app)
+    %TermiteMicDemo.App{} = app = Keyword.fetch!(opts, :app)
     spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,

@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.App.State do
+defmodule Membrane.LLM.Demo.App.State do
   @moduledoc """
   The TUI's view model and all of its pure rendering/update logic.
   """

@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.LoggerHandler do
+defmodule Membrane.LLM.Demo.LoggerHandler do
   @moduledoc false
 
   @spec adding_handler(:logger.handler_config()) :: {:ok, :logger.handler_config()}
@@ -12,7 +12,7 @@ defmodule Gemini.TermiteMicDemo.LoggerHandler do
             level: Logger.level(),
             msg: {:string, iodata()} | {:report, term()} | {:io.format(), [term()]}
           },
-          %{config: %{app: Gemini.TermiteMicDemo.App.t()}}
+          %{config: %{app: Membrane.LLM.Demo.App.t()}}
         ) :: :ok
   def log(%{level: level, msg: msg}, %{config: %{app: app}}) do
     text =
@@ -23,6 +23,6 @@ defmodule Gemini.TermiteMicDemo.LoggerHandler do
       end
       |> String.trim()
 
-    Gemini.TermiteMicDemo.App.log(app, level, text)
+    Membrane.LLM.Demo.App.log(app, level, text)
   end
 end

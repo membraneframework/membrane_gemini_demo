@@ -25,7 +25,7 @@ end
 
 ## The WebRTC bridge widget
 
-`Gemini.TermiteMicDemo.WebRTCBridge` is a `Kino.JS.Live` widget that hosts both
+`Membrane.LLM.Demo.WebRTCBridge` is a `Kino.JS.Live` widget that hosts both
 peer connections in one iframe (so the browser's echo canceller sees mic capture
 and `<audio>` playback on the same page) and relays signalling between the JS and
 the two `Membrane.WebRTC.Signaling` channels. It used to live in the mix project
@@ -33,7 +33,7 @@ under `lib/`; moving the module here is what lets `mix.exs` drop `kino` and
 `membrane_webrtc_plugin`. Its JS asset still lives at `lib/assets/webrtc_bridge`.
 
 ```elixir
-defmodule Gemini.TermiteMicDemo.WebRTCBridge do
+defmodule Membrane.LLM.Demo.WebRTCBridge do
   @moduledoc """
   Kino widget that hosts both peer connections in a single iframe so the
   browser's echo canceller sees mic capture and `<audio>` playback on the
@@ -129,7 +129,7 @@ end
 ```elixir
 defmodule AwaitBridge do
   def await_connected(bridge) do
-    Gemini.TermiteMicDemo.WebRTCBridge.subscribe(bridge)
+    Membrane.LLM.Demo.WebRTCBridge.subscribe(bridge)
     do_await_bridge(%{source?: false, sink?: false})
   end
 
@@ -148,7 +148,7 @@ end
 
 ## The WebRTC pipeline
 
-`Gemini.TermiteMicDemo.Pipeline` bakes the demo's audio graph into its
+`Membrane.LLM.Demo.Pipeline` bakes the demo's audio graph into its
 `handle_init/2`: WebRTC source/sink on both ends (so the browser's echo
 canceller sees mic capture and `<audio>` playback on the same page), a
 resampler from Opus's 48 kHz down to Gemini's 16 kHz, and the
@@ -159,9 +159,9 @@ The caller passes the two `Membrane.WebRTC.Signaling` channels via the
 `submit_text`/`reset_session`/`toggle_mute` send-helpers.
 
 ```elixir
-alias Gemini.TermiteMicDemo
+alias Membrane.LLM.Demo
 
-defmodule Gemini.TermiteMicDemo.Pipeline do
+defmodule Membrane.LLM.Demo.Pipeline do
   @moduledoc """
   The WebRTC pipeline for the demo.
 
@@ -179,7 +179,7 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
   import Membrane.ChildrenSpec
   require Membrane.Pad
 
-  alias Gemini.TermiteMicDemo
+  alias Membrane.LLM.Demo
   alias Membrane.RawAudio
 
   alias Membrane.{
@@ -217,7 +217,7 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
   @impl true
   def handle_playing(_ctx, state) do
     # Bootstrap handshake the App's handle_continue/2 blocks on before creating
-    # the terminal (see Gemini.TermiteMicDemo.App's moduledoc).
+    # the terminal (see Membrane.LLM.Demo.App's moduledoc).
     send(state.app.pid, {:pipeline_playing, self()})
     {[], state}
   end
@@ -242,9 +242,9 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
       |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
       |> child(:input_transcoder, %Transcoder{output_stream_format: @gemini_input_format})
       |> child(:input_resampler, %SWResample.Converter{output_stream_format: @gemini_input_format})
-      |> child(:mute_filter, TermiteMicDemo.MuteFilter)
+      |> child(:mute_filter, Demo.MuteFilter)
       |> child(:mic_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %TermiteMicDemo.ChunkerFilter{
+      |> child(:mic_chunker, %Demo.ChunkerFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:mic_tee, Tee)
@@ -252,7 +252,7 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
       |> via_in(:audio_input)
       |> child(:gemini, Gemini.Bin)
       |> child(:gemini_pts_normalizer, %RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %TermiteMicDemo.ChunkerFilter{
+      |> child(:gemini_chunker, %Demo.ChunkerFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:gemini_tee, Tee)
@@ -264,21 +264,21 @@ defmodule Gemini.TermiteMicDemo.Pipeline do
         tracks: [:audio]
       }),
       # text messages -> gemini
-      child(:text_source, TermiteMicDemo.TextSource)
+      child(:text_source, Demo.TextSource)
       |> via_in(:text_input)
       |> get_child(:gemini),
       # tee the audio samples for the TUI to visualize
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :tui))
       |> child(:mic_realtimer, Realtimer)
-      |> child(:mic_tui_sink, %TermiteMicDemo.TuiSink{
+      |> child(:mic_tui_sink, %Demo.TuiSink{
         origin: :client,
         app: app
       }),
       get_child(:gemini_tee)
       |> via_out(Pad.ref(:output, :tui))
       |> child(:gemini_realtimer, Realtimer)
-      |> child(:gemini_tui_sink, %TermiteMicDemo.TuiSink{
+      |> child(:gemini_tui_sink, %Demo.TuiSink{
         origin: :server,
         app: app
       })
@@ -291,7 +291,7 @@ end
 
 The cell below owns the lifecycle: it kills any previous run, then spawns a
 runner that creates the two signalling channels and the bridge widget, starts
-`Gemini.TermiteMicDemo.Pipeline` under the TUI `App`, waits for it to enter
+`Membrane.LLM.Demo.Pipeline` under the TUI `App`, waits for it to enter
 `:playing`, then brings up the Termite TUI. The bridge widget is rendered
 side-by-side with the terminal at the bottom of the cell.
 
@@ -323,19 +323,19 @@ spawn_link(fn ->
   source_signaling = Membrane.WebRTC.Signaling.new()
   sink_signaling = Membrane.WebRTC.Signaling.new()
 
-  bridge = TermiteMicDemo.WebRTCBridge.new(source_signaling, sink_signaling)
+  bridge = Demo.WebRTCBridge.new(source_signaling, sink_signaling)
 
   send(parent, {:bridge_ready, bridge})
 
   app =
-    TermiteMicDemo.App.new(
-      pipeline: TermiteMicDemo.Pipeline,
+    Demo.App.new(
+      pipeline: Demo.Pipeline,
       source_signaling: source_signaling,
       sink_signaling: sink_signaling,
       terminal_factory: fn -> Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 40) end
     )
 
-  terminal = TermiteMicDemo.App.get_terminal(app)
+  terminal = Demo.App.get_terminal(app)
   send(parent, {:terminal_ready, terminal})
   Process.sleep(:infinity)
 end)

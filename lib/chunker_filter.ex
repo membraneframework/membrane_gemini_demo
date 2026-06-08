@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.ChunkerFilter do
+defmodule Membrane.LLM.Demo.ChunkerFilter do
   @moduledoc false
 
   use Membrane.Filter

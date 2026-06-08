@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.MuteFilter do
+defmodule Membrane.LLM.Demo.MuteFilter do
   @moduledoc false
   
   use Membrane.Filter

@@ -1,8 +1,8 @@
-defmodule Gemini.TermiteMicDemo.App do
+defmodule Membrane.LLM.Demo.App do
   @moduledoc false
   use GenServer
 
-  alias Gemini.TermiteMicDemo.{App, LoggerHandler}
+  alias Membrane.LLM.Demo.{App, LoggerHandler}
   alias Termite.{Screen, Terminal}
 
   @type t :: %__MODULE__{pid: pid()}

@@ -44,7 +44,7 @@ defmodule Native.Pipeline do
   @moduledoc """
   The native (PortAudio) pipeline for the demo.
 
-  Same shape as the WebRTC pipeline `Gemini.TermiteMicDemo.Pipeline` defined in
+  Same shape as the WebRTC pipeline `Membrane.LLM.Demo.Pipeline` defined in
   `demo.livemd` — both bake their audio I/O spec into `handle_init/2`, notify
   the TUI on `:playing`, relay the `:text`/`:reset_session`/`:toggle_mute`
   control messages to named children, and expose the matching send-helpers the
@@ -57,7 +57,7 @@ defmodule Native.Pipeline do
   import Membrane.ChildrenSpec
   require Membrane.Pad
 
-  alias Gemini.TermiteMicDemo
+  alias Membrane.LLM.Demo
   alias Membrane.{Pad, Time}
 
   @chunk_ms 40
@@ -73,29 +73,29 @@ defmodule Native.Pipeline do
 
   @impl true
   def handle_init(_ctx, opts) do
-    %TermiteMicDemo.App{} = app = Keyword.fetch!(opts, :app)
+    %Demo.App{} = app = Keyword.fetch!(opts, :app)
     spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,
         channels: 1,
         sample_rate: 16_000
       })
-      |> child(:mute_filter, TermiteMicDemo.MuteFilter)
+      |> child(:mute_filter, Demo.MuteFilter)
       |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %TermiteMicDemo.ChunkerFilter{
+      |> child(:mic_chunker, %Demo.ChunkerFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:mic_tee, Membrane.Tee),
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :tui))
       |> child(:mic_realtimer, Membrane.Realtimer)
-      |> child(:mic_tui_sink, %TermiteMicDemo.TuiSink{origin: :client, app: app}),
+      |> child(:mic_tui_sink, %Demo.TuiSink{origin: :client, app: app}),
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :main))
       |> via_in(:audio_input)
       |> child(:gemini, Membrane.Gemini.Bin)
       |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %TermiteMicDemo.ChunkerFilter{
+      |> child(:gemini_chunker, %Demo.ChunkerFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
       |> child(:gemini_tee, Membrane.Tee),
@@ -108,8 +108,8 @@ defmodule Native.Pipeline do
       get_child(:gemini_tee)
       |> via_out(Pad.ref(:output, :tui))
       |> child(:gemini_realtimer, Membrane.Realtimer)
-      |> child(:gemini_tui_sink, %TermiteMicDemo.TuiSink{origin: :server, app: app}),
-      child(:text_source, TermiteMicDemo.TextSource)
+      |> child(:gemini_tui_sink, %Demo.TuiSink{origin: :server, app: app}),
+      child(:text_source, Demo.TextSource)
       |> via_in(:text_input)
       |> get_child(:gemini)
     ]
@@ -119,7 +119,7 @@ defmodule Native.Pipeline do
   @impl true
   def handle_playing(_ctx, state) do
     # Bootstrap handshake the App's handle_continue/2 blocks on before creating
-    # the terminal (see Gemini.TermiteMicDemo.App's moduledoc).
+    # the terminal (see Membrane.LLM.Demo.App's moduledoc).
     send(state.app.pid, {:pipeline_playing, self()})
     {[], state}
   end
@@ -144,7 +144,7 @@ end
 # exits so the VM stays alive (the equivalent of the `mix demo` task's receive
 # loop). Field access (`app.pid`) is used instead of a `%App{}` match to keep
 # this top-level code free of compile-time struct expansion.
-app = Gemini.TermiteMicDemo.App.new(pipeline: Native.Pipeline)
+app = Membrane.LLM.Demo.App.new(pipeline: Native.Pipeline)
 pid = app.pid
 ref = Process.monitor(pid)
 

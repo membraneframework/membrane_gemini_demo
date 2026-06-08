@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.TuiSink do
+defmodule Membrane.LLM.Demo.TuiSink do
   @moduledoc """
   Terminal-UI sink for the demo.
 
@@ -16,7 +16,7 @@ defmodule Gemini.TermiteMicDemo.TuiSink do
 
   use Membrane.Sink
 
-  alias Gemini.TermiteMicDemo.App
+  alias Membrane.LLM.Demo.App
   alias Membrane.Gemini.Events
   alias Membrane.RawAudio
 

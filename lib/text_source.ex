@@ -1,4 +1,4 @@
-defmodule Gemini.TermiteMicDemo.TextSource do
+defmodule Membrane.LLM.Demo.TextSource do
   @moduledoc false
   
   use Membrane.Source

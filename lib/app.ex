@@ -39,8 +39,12 @@ defmodule Membrane.LLM.Demo.App do
   @spec log(t(), Logger.level(), String.t()) :: :ok
   def log(%App{pid: pid}, level, text), do: GenServer.cast(pid, {:log, level, text})
 
+  # :infinity because the call may arrive while the App is still in
+  # handle_continue/2 waiting for the pipeline to reach :playing; the wait is
+  # bounded there by @playing_timeout, which crashes the App (and so this call)
+  # if it elapses.
   @spec get_terminal(t()) :: struct()
-  def get_terminal(%App{pid: pid}), do: GenServer.call(pid, :get_terminal)
+  def get_terminal(%App{pid: pid}), do: GenServer.call(pid, :get_terminal, :infinity)
 
   @spec start_link(keyword()) :: {:ok, pid()}
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
@@ -51,20 +55,29 @@ defmodule Membrane.LLM.Demo.App do
     %__MODULE__{pid: pid}
   end
 
+  # Setup is deferred to handle_continue/2 so we don't block — or call
+  # Kino.start_child/1 (via the terminal adapter) — inside init/1. That keeps the
+  # App startable with Kino.start_child/1: init/1 returns at once, freeing Kino's
+  # supervisor before the terminal widget is built.
   @impl true
-  def init(opts) do
+  def init(opts), do: {:ok, opts, {:continue, :setup}}
+
+  @impl true
+  def handle_continue(:setup, opts) do
     app = %App{pid: self()}
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
-    pipeline_mod = Keyword.fetch!(opts, :pipeline)
+    pipeline_pid = Keyword.fetch!(opts, :pipeline_pid)
+    pipeline_mod = Keyword.fetch!(opts, :pipeline_mod)
 
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, LoggerHandler, %{config: %{app: app}})
 
-    {:ok, _supervisor, pipeline} =
-      Membrane.Pipeline.start_link(pipeline_mod, app: app)
+    # The pipeline is started before us; hand it our pid so it can build its
+    # spec, then wait for it to reach :playing.
+    pipeline_mod.set_app(pipeline_pid, app)
 
     receive do
-      {:pipeline_playing, ^pipeline} -> :ok
+      {:pipeline_playing, ^pipeline_pid} -> :ok
     after
       @playing_timeout ->
         raise "pipeline did not reach :playing within #{@playing_timeout}ms"
@@ -82,7 +95,7 @@ defmodule Membrane.LLM.Demo.App do
 
     Process.send_after(self(), :render_tick, @render_interval)
 
-    {:ok, App.State.new(terminal, pipeline, pipeline_mod)}
+    {:noreply, App.State.new(terminal, pipeline_pid, pipeline_mod)}
   end
 
   @impl true

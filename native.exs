@@ -33,10 +33,11 @@ defmodule Native.Pipeline do
   @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
   def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
 
-  @impl true
-  def handle_init(_ctx, opts) do
-    %Demo.App{} = app = Keyword.fetch!(opts, :app)
+  @spec set_app(pipeline :: pid(), Demo.App.t()) :: {:app, Demo.App.t()}
+  def set_app(pipeline, app), do: send(pipeline, {:app, app})
 
+  @impl true
+  def handle_init(_ctx, _opts) do
     spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,
@@ -48,12 +49,7 @@ defmodule Native.Pipeline do
       |> child(:mic_chunker, %Demo.ChunkFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
-      |> child(:mic_tee, Membrane.Tee),
-      get_child(:mic_tee)
-      |> via_out(Pad.ref(:output, :tui))
-      |> child(:mic_realtimer, Membrane.Realtimer)
-      |> child(:mic_tui_sink, %Demo.TuiSink{origin: :client, app: app}),
-      get_child(:mic_tee)
+      |> child(:mic_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))
       |> via_in(:audio_input)
       |> child(:gemini, Membrane.Gemini.Bin)
@@ -61,29 +57,45 @@ defmodule Native.Pipeline do
       |> child(:gemini_chunker, %Demo.ChunkFilter{
         chunk_duration: Time.milliseconds(@chunk_ms)
       })
-      |> child(:gemini_tee, Membrane.Tee),
-      get_child(:gemini_tee)
+      |> child(:gemini_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))
       |> child(:gemini_speaker, %Membrane.PortAudio.Sink{
         ringbuffer_size: 32_768,
         portaudio_buffer_size: 512
       }),
-      get_child(:gemini_tee)
-      |> via_out(Pad.ref(:output, :tui))
-      |> child(:gemini_realtimer, Membrane.Realtimer)
-      |> child(:gemini_tui_sink, %Demo.TuiSink{origin: :server, app: app}),
       child(:text_source, Demo.TextSource)
       |> via_in(:text_input)
       |> get_child(:gemini)
     ]
 
-    {[spec: spec], %{app: app}}
+    {[spec: spec], %{app: nil}}
   end
 
   @impl true
-  def handle_playing(_ctx, %{app: app} = state) do
+  def handle_setup(_ctx, state), do: {[setup: :incomplete], state}
+
+  @impl true
+  def handle_playing(_ctx, %{app: app} = state) when not is_nil(app) do
     Demo.App.signal_pipeline_playing(app)
     {[], state}
+  end
+
+  # The app pid arrives after the pipeline is started; only then can the spec be
+  # built (the TUI sinks need it) and the deferred setup completed.
+  @impl true
+  def handle_info({:app, %Demo.App{} = app}, _ctx, state) do
+    tui_spec = [
+      get_child(:mic_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:mic_realtimer, Membrane.Realtimer)
+      |> child(:mic_tui_sink, %Demo.TuiSink{origin: :client, app: app}),
+      get_child(:gemini_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:gemini_realtimer, Membrane.Realtimer)
+      |> child(:gemini_tui_sink, %Demo.TuiSink{origin: :server, app: app})
+    ]
+
+    {[spec: tui_spec, setup: :complete], %{state | app: app}}
   end
 
   @impl true
@@ -99,7 +111,9 @@ defmodule Native.Pipeline do
     do: {[notify_child: {:mute_filter, :toggle_mute}], state}
 end
 
-app = Membrane.LLM.Demo.App.new(pipeline: Native.Pipeline)
+{:ok, _supervisor, pipeline} = Membrane.Pipeline.start_link(Native.Pipeline)
+
+app = Membrane.LLM.Demo.App.new(pipeline_pid: pipeline, pipeline_mod: Native.Pipeline)
 pid = app.pid
 ref = Process.monitor(pid)
 

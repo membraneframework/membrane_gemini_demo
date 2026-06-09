@@ -35,10 +35,6 @@ defmodule Membrane.Gemini.Demo.Mixfile do
     [
       {:membrane_core, "~> 1.0"},
       {:membrane_gemini_plugin, "~> 0.1.2"},
-      {:membrane_portaudio_plugin, ">= 0.0.0"},
-      {:membrane_realtimer_plugin, "~> 0.10.0"},
-      {:membrane_ffmpeg_swresample_plugin, "~> 0.20.5"},
-      {:membrane_raw_audio_parser_plugin, "~> 0.4.0"},
       {:termite, "~> 0.4.2"},
       {:dialyxir, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, ">= 0.0.0", only: :dev, runtime: false}

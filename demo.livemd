@@ -25,6 +25,135 @@ case System.fetch_env("LB_GEMINI_API_KEY") do
 end
 ```
 
+## Hi!
+
+Welcome to this livebook demo, where we'll set up a Membrane pipeline powering a very simple chatbot app.
+
+For the UI, we've used [Termite](https://github.com/Gazler/termite) with the [KinoTermite](https://github.com/Gazler/kino_termite/tree/master) adapter that allows embedding an `xterm.js` terminal directly in this livebook.
+
+Enjoy!
+
+## The pipeline
+
+This is a pretty straightforward Membrane pipeline for our chatbot app. The central element is `Membrane.Gemini.Bin`, which is an endpoint streaming our inputs to and responses from the Gemini Live API.
+
+We use WebRTC for audio and its built-in echo cancellation, so we can talk with Gemini without it hearing feedback from itself.
+
+The `Demo.TuiSink` elements are used to send audio samples to the Termite process to render the waveforms in real time, while also handling events from `Membrane.Gemini.Bin`. We add them lazily once the TUI app starts and signals its PID to the pipeline.
+
+```elixir
+defmodule Membrane.LLM.Demo.Pipeline do
+  use Membrane.Pipeline
+
+  import Membrane.ChildrenSpec
+  require Membrane.Pad
+
+  alias Membrane.LLM.Demo
+  alias Membrane.RawAudio
+  alias Membrane.Time
+
+  @chunk_ms 40
+  @gemini_input_format %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
+
+  @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
+  def submit_text(pipeline, text), do: send(pipeline, {:text, text})
+
+  @spec reset_session(pipeline :: pid()) :: :reset_session
+  def reset_session(pipeline), do: send(pipeline, :reset_session)
+
+  @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
+  def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
+
+  @spec set_app(pipeline :: pid(), Demo.App.t()) :: {:app, Demo.App.t()}
+  def set_app(pipeline, app), do: send(pipeline, {:app, app})
+
+  @spec set_signaling(pipeline :: pid(), WebRTC.Signaling.t(), WebRTC.Signaling.t()) ::
+          {:signaling, WebRTC.Signaling.t(), WebRTC.Signaling.t()}
+  def set_signaling(pipeline, source_signaling, sink_signaling),
+    do: send(pipeline, {:signaling, source_signaling, sink_signaling})
+
+  @impl true
+  def handle_init(_ctx, [signaling: %{
+    source: source_signaling,
+    sink: sink_signaling
+  }]) do
+    spec = [
+      child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
+      |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
+      |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: @gemini_input_format})
+      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{output_stream_format: @gemini_input_format})
+      |> child(:mute_filter, Demo.MuteFilter)
+      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
+      |> child(:mic_chunker, %Demo.ChunkFilter{
+        chunk_duration: Time.milliseconds(@chunk_ms)
+      })
+      |> child(:mic_tee, Membrane.Tee)
+      |> via_out(Pad.ref(:output, :main))
+      |> via_in(:audio_input)
+      |> child(:gemini, Membrane.Gemini.Bin)
+      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
+      |> child(:gemini_chunker, %Demo.ChunkFilter{
+        chunk_duration: Time.milliseconds(@chunk_ms)
+      })
+      |> child(:gemini_tee, Membrane.Tee)
+      |> via_out(Pad.ref(:output, :main))
+      |> child(:output_transcoder, %Membrane.Transcoder{output_stream_format: Membrane.Opus})
+      |> via_in(Pad.ref(:input, :main_audio), options: [kind: :audio])
+      |> child(:webrtc_sink, %Membrane.WebRTC.Sink{
+        signaling: sink_signaling,
+        tracks: [:audio]
+      }),
+      child(:text_source, Demo.TextSource)
+      |> via_in(:text_input)
+      |> get_child(:gemini),
+    ]
+    {[spec: spec], %{app: nil}}
+  end
+
+  @impl true
+  def handle_setup(_ctx, state), do: {[setup: :incomplete], state}
+
+  @impl true
+  def handle_playing(_ctx, %{app: app} = state) do
+    Demo.App.signal_pipeline_playing(app)
+    {[], state}
+  end
+
+  @impl true
+  def handle_info({:app, app}, _ctx, state) when is_pid(app) do
+    tui_spec = [
+      get_child(:mic_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:mic_realtimer, Membrane.Realtimer)
+      |> child(:mic_tui_sink, %Demo.TuiSink{
+        origin: :client,
+        app: app
+      }),
+      get_child(:gemini_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:gemini_realtimer, Membrane.Realtimer)
+      |> child(:gemini_tui_sink, %Demo.TuiSink{
+        origin: :server,
+        app: app
+      })
+    ]
+    {[spec: tui_spec, setup: :complete], %{state | app: app}}
+end
+
+  @impl true
+  def handle_info({:text, _text} = msg, _ctx, state),
+    do: {[notify_child: {:text_source, msg}], state}
+
+  @impl true
+  def handle_info(:reset_session, _ctx, state),
+    do: {[notify_child: {:gemini, :reset_session}], state}
+
+  @impl true
+  def handle_info(:toggle_mute, _ctx, state),
+    do: {[notify_child: {:mute_filter, :toggle_mute}], state}
+end
+```
+
 ## The WebRTC bridge widget
 
 `Membrane.LLM.Demo.WebRTCBridge` is a `Kino.JS.Live` widget that hosts both
@@ -121,7 +250,7 @@ end
 ```
 
 ```elixir
-defmodule AwaitBridge do
+defmodule Membrane.LLM.Demo.AwaitBridge do
   def await_connected(bridge) do
     Membrane.LLM.Demo.WebRTCBridge.subscribe(bridge)
     do_await_bridge(%{source?: false, sink?: false})
@@ -135,147 +264,16 @@ defmodule AwaitBridge do
       {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
       _other -> state
     after
-      15_000 -> raise "Timed out waiting for WebRTC bridge"    
+      15_000 -> raise "Timed out waiting for WebRTC bridge"
     end
     |> do_await_bridge()
   end
 end
 ```
 
-## The pipeline
-
-This is a pretty straightforward Membrane pipeline for our chatbot app. The central element is `Membrane.Gemini.Bin`, which is an endpoint streaming our inputs to and responses from the Gemini Live API.
-
-We use WebRTC for audio and its built-in echo cancellation, so we can talk with Gemini without it hearing feedback from itself.
-
-The `Demo.TuiSink` elements are used to send audio samples to the Termite process to render the waveforms in real time, while also handling events from `Membrane.Gemini.Bin`. We add them lazily once the TUI app starts and signals its PID to the pipeline.
-
-```elixir
-defmodule Membrane.LLM.Demo.Pipeline do
-  use Membrane.Pipeline
-
-  import Membrane.ChildrenSpec
-  require Membrane.Pad
-
-  alias Membrane.LLM.Demo
-  alias Membrane.RawAudio
-  alias Membrane.Time
-
-  @chunk_ms 40
-  @gemini_input_format %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
-
-  @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
-  def submit_text(pipeline, text), do: send(pipeline, {:text, text})
-
-  @spec reset_session(pipeline :: pid()) :: :reset_session
-  def reset_session(pipeline), do: send(pipeline, :reset_session)
-
-  @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
-  def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
-
-  @spec set_app(pipeline :: pid(), Demo.App.t()) :: {:app, Demo.App.t()}
-  def set_app(pipeline, app), do: send(pipeline, {:app, app})
-
-  @spec set_signaling(pipeline :: pid(), WebRTC.Signaling.t(), WebRTC.Signaling.t()) ::
-          {:signaling, WebRTC.Signaling.t(), WebRTC.Signaling.t()}
-  def set_signaling(pipeline, source_signaling, sink_signaling),
-    do: send(pipeline, {:signaling, source_signaling, sink_signaling})
-
-  @impl true
-  def handle_init(_ctx, [signaling: %{
-    source: source_signaling,
-    sink: sink_signaling
-  }]) do
-    spec = [
-      child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
-      |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
-      |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: @gemini_input_format})
-      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{output_stream_format: @gemini_input_format})
-      |> child(:mute_filter, Demo.MuteFilter)
-      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
-      })
-      |> child(:mic_tee, Membrane.Tee)
-      |> via_out(Pad.ref(:output, :main))
-      |> via_in(:audio_input)
-      |> child(:gemini, Membrane.Gemini.Bin)
-      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
-      })
-      |> child(:gemini_tee, Membrane.Tee)
-      |> via_out(Pad.ref(:output, :main))
-      |> child(:output_transcoder, %Membrane.Transcoder{output_stream_format: Membrane.Opus})
-      |> via_in(Pad.ref(:input, :main_audio), options: [kind: :audio])
-      |> child(:webrtc_sink, %Membrane.WebRTC.Sink{
-        signaling: sink_signaling,
-        tracks: [:audio]
-      }),
-      child(:text_source, Demo.TextSource)
-      |> via_in(:text_input)
-      |> get_child(:gemini),
-    ]  
-    {[spec: spec], %{app: nil}}
-  end
-  
-  @impl true
-  def handle_setup(_ctx, state), do: {[setup: :incomplete], state}
-
-  @impl true
-  def handle_playing(_ctx, %{app: app} = state) do
-    Demo.App.signal_pipeline_playing(app)
-    {[], state}
-  end
-
-  @impl true
-  def handle_info({:app, app}, _ctx, state) when is_pid(app) do
-    tui_spec = [
-      get_child(:mic_tee)
-      |> via_out(Pad.ref(:output, :tui))
-      |> child(:mic_realtimer, Membrane.Realtimer)
-      |> child(:mic_tui_sink, %Demo.TuiSink{
-        origin: :client,
-        app: app
-      }),
-      get_child(:gemini_tee)
-      |> via_out(Pad.ref(:output, :tui))
-      |> child(:gemini_realtimer, Membrane.Realtimer)
-      |> child(:gemini_tui_sink, %Demo.TuiSink{
-        origin: :server,
-        app: app
-      })      
-    ]
-    {[spec: tui_spec, setup: :complete], %{state | app: app}}
-end
-
-  @impl true
-  def handle_info({:text, _text} = msg, _ctx, state),
-    do: {[notify_child: {:text_source, msg}], state}
-
-  @impl true
-  def handle_info(:reset_session, _ctx, state),
-    do: {[notify_child: {:gemini, :reset_session}], state}
-
-  @impl true
-  def handle_info(:toggle_mute, _ctx, state),
-    do: {[notify_child: {:mute_filter, :toggle_mute}], state}
-end
-```
-
 ## Start the pipeline + TUI
 
-Both the pipeline and the TUI `App` are started with `Kino.start_child/1`, which
-supervises them under Kino's tree and terminates the previous instance whenever
-you re-evaluate the cell — so re-running cleans up instead of stacking duplicates.
-No wrapper process is needed: the `App`'s setup (the blocking wait for `:playing`
-and the terminal-widget creation, which itself calls `Kino.start_child/1`) lives
-in `handle_continue/2`, so its `init/1` returns immediately and doesn't deadlock
-the supervisor.
-
-The bridge widget, on the other hand, is *not* started this way:
-`Kino.JS.Live.new/2` calls `Kino.start_child/1` synchronously, so it's created
-directly in the cell and rendered as the cell result.
+Now that we've defined the modules for the pipeline and WebRTC I/O for this livebook, we use the generic `Membrane.LLM.Demo.App` module for the TUI (there's a native variant in `native.exs`!).
 
 ```elixir
 alias Membrane.LLM.Demo
@@ -322,10 +320,5 @@ Click `Connect` above and run the cell below to wait for the chatbot TUI to show
 AwaitBridge.await_connected(bridge)
 
 terminal = Demo.App.get_terminal(app_pid)
-```
-
-```elixir
 KinoTermite.output(terminal)
 ```
-
-<!-- livebook:{"offset":10465,"stamp":{"token":"XCP.dvyk6h2oH8At1TXOl91gy4kDq5InqC_Q37b8tigwYAuYw5CbHT6YUZfTKZJXDPouStJUy9zLoiWQdu-qkFUZZmkbmRDwbwTqRE9YnRMEK78HXIJ9S92wxeI","version":2}} -->

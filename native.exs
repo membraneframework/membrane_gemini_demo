@@ -1,4 +1,9 @@
-Mix.install([{:membrane_gemini_demo, path: __DIR__}])
+Mix.install([
+  {:membrane_gemini_demo, path: __DIR__},
+  {:membrane_gemini_plugin, "~> 0.1.2"},
+  {:membrane_portaudio_plugin, "~> 0.19.5"},
+  {:membrane_raw_audio_parser_plugin, "~> 0.4.1"}
+])
 
 case System.fetch_env("GEMINI_API_KEY") do
   {:ok, api_key} ->

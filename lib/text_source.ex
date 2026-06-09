@@ -1,6 +1,6 @@
 defmodule Membrane.LLM.Demo.TextSource do
   @moduledoc false
-  
+
   use Membrane.Source
 
   def_output_pad :output,

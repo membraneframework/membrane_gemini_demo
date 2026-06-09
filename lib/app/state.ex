@@ -198,7 +198,10 @@ defmodule Membrane.LLM.Demo.App.State do
 
     # logging depends on debug mode - when it is off, invisible logs shouldn't split a transcript,
     # but they should intersperse the transcripts when debug mode is on
-    split = if state.debug_mode, do: split_head_turn(event_history), else: split_last_turn(event_history)
+    split =
+      if state.debug_mode,
+        do: split_head_turn(event_history),
+        else: split_last_turn(event_history)
 
     case {pending, split} do
       {false, {newer, {:turn, ^kind, prev}, older}} ->

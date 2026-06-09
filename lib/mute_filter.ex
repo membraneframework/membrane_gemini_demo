@@ -1,6 +1,6 @@
 defmodule Membrane.LLM.Demo.MuteFilter do
   @moduledoc false
-  
+
   use Membrane.Filter
 
   alias Membrane.RawAudio

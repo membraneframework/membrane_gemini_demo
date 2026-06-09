@@ -16,8 +16,8 @@ defmodule Membrane.LLM.Demo.TuiSink do
 
   use Membrane.Sink
 
-  alias Membrane.LLM.Demo.App
   alias Membrane.Gemini.Events
+  alias Membrane.LLM.Demo.App
   alias Membrane.RawAudio
 
   @sample_count 5

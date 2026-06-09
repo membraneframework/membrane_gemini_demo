@@ -135,8 +135,8 @@ defmodule Membrane.LLM.Demo.App.State do
       event_history
       |> Enum.reverse()
       |> Enum.filter(fn
-        {:turn, _, _} -> true
-        _ -> debug_mode
+        {:turn, _kind, _text} -> true
+        _event -> debug_mode
       end)
       |> with_separators()
       |> Enum.flat_map(&format_history_entry(w, &1))
@@ -207,7 +207,7 @@ defmodule Membrane.LLM.Demo.App.State do
       {false, {newer, {:turn, ^kind, prev}, older}} ->
         %{state | event_history: newer ++ [{:turn, kind, prev <> delta} | older]}
 
-      _ ->
+      _other ->
         push_history(state, {:turn, kind, delta})
     end
   end
@@ -215,13 +215,13 @@ defmodule Membrane.LLM.Demo.App.State do
   @typep turn_split :: {[event_entry()], event_entry() | nil, [event_entry()]}
 
   @spec split_head_turn([event_entry()]) :: turn_split()
-  defp split_head_turn([{:turn, _, _} = turn | older]), do: {[], turn, older}
+  defp split_head_turn([{:turn, _kind, _text} = turn | older]), do: {[], turn, older}
   defp split_head_turn(history), do: {[], nil, history}
 
   @spec split_last_turn([event_entry()], [event_entry()]) :: turn_split()
   defp split_last_turn(history, newer \\ [])
 
-  defp split_last_turn([{:turn, _, _} = turn | older], newer),
+  defp split_last_turn([{:turn, _kind, _text} = turn | older], newer),
     do: {Enum.reverse(newer), turn, older}
 
   defp split_last_turn([entry | rest], newer),
@@ -349,8 +349,7 @@ defmodule Membrane.LLM.Demo.App.State do
         |> fill_dots(char_col, 1, l_row, r_row)
       end)
 
-    for char_row <- 0..(char_height - 1) do
-      Enum.map_join(0..(char_width - 1), fn char_col ->
+    braille_value = fn char_row, char_col ->
         value =
           for dot_col <- 0..1,
               local_row <- 0..3,
@@ -360,6 +359,11 @@ defmodule Membrane.LLM.Demo.App.State do
           end
 
         <<0x2800 + value::utf8>>
+    end
+
+    for char_row <- 0..(char_height - 1) do
+      Enum.map_join(0..(char_width - 1), fn char_col ->
+        braille_value.(char_row, char_col)
       end)
     end
   end

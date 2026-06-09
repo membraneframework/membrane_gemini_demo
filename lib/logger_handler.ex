@@ -1,6 +1,8 @@
 defmodule Membrane.LLM.Demo.LoggerHandler do
   @moduledoc false
 
+  alias Membrane.LLM.Demo.App
+
   @spec adding_handler(:logger.handler_config()) :: {:ok, :logger.handler_config()}
   def adding_handler(config), do: {:ok, config}
 
@@ -12,7 +14,7 @@ defmodule Membrane.LLM.Demo.LoggerHandler do
             level: Logger.level(),
             msg: {:string, iodata()} | {:report, term()} | {:io.format(), [term()]}
           },
-          %{config: %{app: Membrane.LLM.Demo.App.t()}}
+          %{config: %{app: App.t()}}
         ) :: :ok
   def log(%{level: level, msg: msg}, %{config: %{app: app}}) do
     text =
@@ -23,6 +25,6 @@ defmodule Membrane.LLM.Demo.LoggerHandler do
       end
       |> String.trim()
 
-    Membrane.LLM.Demo.App.log(app, level, text)
+    App.log(app, level, text)
   end
 end

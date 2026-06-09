@@ -134,6 +134,8 @@ defmodule AwaitBridge do
       {:webrtc_bridge, "source", "connected"} -> %{state | source?: true}
       {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
       _other -> state
+    after
+      15_000 -> raise "Timed out waiting for WebRTC bridge"    
     end
     |> do_await_bridge()
   end
@@ -303,6 +305,18 @@ sink_signaling = Membrane.WebRTC.Signaling.new()
 
 bridge = Demo.WebRTCBridge.new(source_signaling, sink_signaling)
 
+bridge
+```
+
+Click `Connect` above and run the cell below to wait for the chatbot TUI to show up. You can speak with Gemini or send text messages using the chat prompt. Available chat commands:
+
+```
+/mute — mute / unmute the input device
+/debug — toggle the debug event log
+/clear — reset the conversation
+```
+
+```elixir
 {:ok, _supervisor, pipeline} =
   Kino.start_child(%{
     id: Demo.Pipeline,
@@ -323,22 +337,13 @@ bridge = Demo.WebRTCBridge.new(source_signaling, sink_signaling)
     )
   )
 
-bridge
-```
-
-Click `Connect` above and run the cell below to wait for the chatbot TUI to show up. You can speak with Gemini or send text messages using the chat prompt. Available chat commands:
-
-```
-/mute — mute / unmute the input device
-/debug — toggle the debug event log
-/clear — reset the conversation
-```
-
-```elixir
 AwaitBridge.await_connected(bridge)
 
 terminal = Demo.App.get_terminal(%Demo.App{pid: app_pid})
+```
+
+```elixir
 KinoTermite.output(terminal)
 ```
 
-<!-- livebook:{"offset":10609,"stamp":{"token":"XCP.sS5iLGcAn5RnL_S_S-2YcQHawE_kttlr2lf1sVl940U9wcGmVY8r-iHFU2YHC6w255tDR3S3yMpPN79RAIRrvSFPLWSr3dMlCN-kgJHcD27LzUyoFjdG0fI","version":2}} -->
+<!-- livebook:{"offset":10698,"stamp":{"token":"XCP.NZdLJIVsL9m7S7xoXh7tTzHTyNBFuFt1kwD0vn9HF8TvsS4OIhjMTUCH2DVyormCvJipDFHDuJT7UH4NBdmOxOyQyxkpamP6eNGms8avrxVbElI9IilLdOg","version":2}} -->

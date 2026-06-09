@@ -1,5 +1,7 @@
 # Membrane Gemini TUI Demo
 
+<img width="960" height="573" alt="output" src="https://github.com/user-attachments/assets/a264640b-577e-4e9f-a7cb-d1b2c5801e20" />
+
 This repository contains a simple chatbot app utilising the Google Live API via [`membrane_gemini_plugin`](https://github.com/membraneframework/membrane_gemini_plugin). It's a TUI app built using [Membrane](https://membrane.stream) for audio processing and [Termite](https://github.com/Gazler/termite) for the UI.
 
 ## Usage

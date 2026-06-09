@@ -83,7 +83,7 @@ defmodule Native.Pipeline do
   # The app pid arrives after the pipeline is started; only then can the spec be
   # built (the TUI sinks need it) and the deferred setup completed.
   @impl true
-  def handle_info({:app, %Demo.App{} = app}, _ctx, state) do
+  def handle_info({:app, app}, _ctx, state) when is_pid(app) do
     tui_spec = [
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :tui))
@@ -114,9 +114,8 @@ end
 {:ok, _supervisor, pipeline} = Membrane.Pipeline.start_link(Native.Pipeline)
 
 app = Membrane.LLM.Demo.App.new(pipeline_pid: pipeline, pipeline_mod: Native.Pipeline)
-pid = app.pid
-ref = Process.monitor(pid)
+ref = Process.monitor(app)
 
 receive do
-  {:DOWN, ^ref, :process, ^pid, reason} -> exit(reason)
+  {:DOWN, ^ref, :process, ^app, reason} -> exit(reason)
 end

@@ -5,46 +5,45 @@ defmodule Membrane.LLM.Demo.App do
   alias Membrane.LLM.Demo.{App, LoggerHandler}
   alias Termite.{Screen, Terminal}
 
-  @type t :: %__MODULE__{pid: pid()}
-  defstruct [:pid]
+  @type t :: pid()
 
   @render_interval 50
   @playing_timeout 30_000
 
   @spec signal_pipeline_playing(t(), pid()) :: :ok
-  def signal_pipeline_playing(%App{pid: pid}, pipeline \\ self()),
-    do: send(pid, {:pipeline_playing, pipeline})
+  def signal_pipeline_playing(app, pipeline \\ self()),
+    do: send(app, {:pipeline_playing, pipeline})
 
   @spec mic_samples(t(), [float()]) :: :ok
-  def mic_samples(%App{pid: pid}, samples), do: GenServer.cast(pid, {:mic_samples, samples})
+  def mic_samples(app, samples), do: GenServer.cast(app, {:mic_samples, samples})
 
   @spec gemini_samples(t(), [float()]) :: :ok
-  def gemini_samples(%App{pid: pid}, samples), do: GenServer.cast(pid, {:gemini_samples, samples})
+  def gemini_samples(app, samples), do: GenServer.cast(app, {:gemini_samples, samples})
 
   @spec input_transcript(t(), String.t()) :: :ok
-  def input_transcript(%App{pid: pid}, text), do: GenServer.cast(pid, {:input_transcript, text})
+  def input_transcript(app, text), do: GenServer.cast(app, {:input_transcript, text})
 
   @spec output_transcript(t(), String.t()) :: :ok
-  def output_transcript(%App{pid: pid}, text), do: GenServer.cast(pid, {:output_transcript, text})
+  def output_transcript(app, text), do: GenServer.cast(app, {:output_transcript, text})
 
   @spec thinking(t(), String.t()) :: :ok
-  def thinking(%App{pid: pid}, text), do: GenServer.cast(pid, {:thinking, text})
+  def thinking(app, text), do: GenServer.cast(app, {:thinking, text})
 
   @spec event(t(), String.t()) :: :ok
-  def event(%App{pid: pid}, text), do: GenServer.cast(pid, {:event, text})
+  def event(app, text), do: GenServer.cast(app, {:event, text})
 
   @spec clear_transcripts(t()) :: :ok
-  def clear_transcripts(%App{pid: pid}), do: GenServer.cast(pid, :clear_transcripts)
+  def clear_transcripts(app), do: GenServer.cast(app, :clear_transcripts)
 
   @spec log(t(), Logger.level(), String.t()) :: :ok
-  def log(%App{pid: pid}, level, text), do: GenServer.cast(pid, {:log, level, text})
+  def log(app, level, text), do: GenServer.cast(app, {:log, level, text})
 
   # :infinity because the call may arrive while the App is still in
   # handle_continue/2 waiting for the pipeline to reach :playing; the wait is
   # bounded there by @playing_timeout, which crashes the App (and so this call)
   # if it elapses.
   @spec get_terminal(t()) :: struct()
-  def get_terminal(%App{pid: pid}), do: GenServer.call(pid, :get_terminal, :infinity)
+  def get_terminal(app), do: GenServer.call(app, :get_terminal, :infinity)
 
   @spec start_link(keyword()) :: {:ok, pid()}
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
@@ -52,7 +51,7 @@ defmodule Membrane.LLM.Demo.App do
   @spec new(keyword()) :: t()
   def new(opts) do
     {:ok, pid} = start_link(opts)
-    %__MODULE__{pid: pid}
+    pid
   end
 
   # Setup is deferred to handle_continue/2 so we don't block — or call
@@ -64,7 +63,7 @@ defmodule Membrane.LLM.Demo.App do
 
   @impl true
   def handle_continue(:setup, opts) do
-    app = %App{pid: self()}
+    app = self()
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
     pipeline_pid = Keyword.fetch!(opts, :pipeline_pid)
     pipeline_mod = Keyword.fetch!(opts, :pipeline_mod)

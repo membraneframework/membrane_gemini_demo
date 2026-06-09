@@ -85,8 +85,6 @@ defmodule Native.Pipeline do
     {[], state}
   end
 
-  # The app pid arrives after the pipeline is started; only then can the spec be
-  # built (the TUI sinks need it) and the deferred setup completed.
   @impl true
   def handle_info({:app, app}, _ctx, state) when is_pid(app) do
     tui_spec = [

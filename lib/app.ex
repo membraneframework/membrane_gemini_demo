@@ -38,12 +38,8 @@ defmodule Membrane.LLM.Demo.App do
   @spec log(t(), Logger.level(), String.t()) :: :ok
   def log(app, level, text), do: GenServer.cast(app, {:log, level, text})
 
-  # :infinity because the call may arrive while the App is still in
-  # handle_continue/2 waiting for the pipeline to reach :playing; the wait is
-  # bounded there by @playing_timeout, which crashes the App (and so this call)
-  # if it elapses.
   @spec get_terminal(t()) :: struct()
-  def get_terminal(app), do: GenServer.call(app, :get_terminal, :infinity)
+  def get_terminal(app), do: GenServer.call(app, :get_terminal, @playing_timeout)
 
   @spec start_link(keyword()) :: {:ok, pid()}
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts)
@@ -54,15 +50,11 @@ defmodule Membrane.LLM.Demo.App do
     pid
   end
 
-  # Setup is deferred to handle_continue/2 so we don't block — or call
-  # Kino.start_child/1 (via the terminal adapter) — inside init/1. That keeps the
-  # App startable with Kino.start_child/1: init/1 returns at once, freeing Kino's
-  # supervisor before the terminal widget is built.
   @impl true
-  def init(opts), do: {:ok, opts, {:continue, :setup}}
+  def init(opts), do: {:ok, {:continue, {:setup, opts}}}
 
   @impl true
-  def handle_continue(:setup, opts) do
+  def handle_continue({:setup, opts}, _state) do
     app = self()
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
     pipeline_pid = Keyword.fetch!(opts, :pipeline_pid)
@@ -71,8 +63,6 @@ defmodule Membrane.LLM.Demo.App do
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, LoggerHandler, %{config: %{app: app}})
 
-    # The pipeline is started before us; hand it our pid so it can build its
-    # spec, then wait for it to reach :playing.
     pipeline_mod.set_app(pipeline_pid, app)
 
     receive do
@@ -84,6 +74,8 @@ defmodule Membrane.LLM.Demo.App do
 
     # The terminal MUST be created inside this process: adapters like
     # KinoTermite capture `self()` to route keystroke messages back to us.
+    # Also: KinoTermite uses `Kino.start_child` underneath, so this setup
+    # has to be in `handle_continue` instead of `init`, otherwise it deadlocks.
     terminal = terminal_factory.()
 
     terminal =

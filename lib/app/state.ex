@@ -196,13 +196,8 @@ defmodule Membrane.LLM.Demo.App.State do
       |> Map.put(pending_field, false)
       |> Map.put(:last_event, "#{turn_label(kind)}#{delta}")
 
-    # With debug off, extend the most recent turn of this kind even when
-    # log/event entries have since been pushed on top of it: those entries are
-    # hidden, so matching only the history head would fragment the transcript
-    # depending on whether (and at which level) a log happened to fire between
-    # deltas. With debug on the entries are visible, so we keep deltas separate
-    # to leave the transcript interleaved with logs in chronological order
-    # rather than collapsed into one block that scrolls the logs out of view.
+    # logging depends on debug mode - when it is off, invisible logs shouldn't split a transcript,
+    # but they should intersperse the transcripts when debug mode is on
     split = if state.debug_mode, do: split_head_turn(event_history), else: split_last_turn(event_history)
 
     case {pending, split} do

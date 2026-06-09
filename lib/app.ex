@@ -51,7 +51,7 @@ defmodule Membrane.LLM.Demo.App do
   end
 
   @impl true
-  def init(opts), do: {:ok, {:continue, {:setup, opts}}}
+  def init(opts), do: {:ok, %{}, {:continue, {:setup, opts}}}
 
   @impl true
   def handle_continue({:setup, opts}, _state) do

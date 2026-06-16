@@ -315,7 +315,7 @@ Click `Connect` above and run the cell below to wait for the chatbot TUI to show
     )
   )
 
-AwaitBridge.await_connected(bridge)
+Demo.AwaitBridge.await_connected(bridge)
 
 terminal = Demo.App.get_terminal(app_pid)
 KinoTermite.output(terminal)

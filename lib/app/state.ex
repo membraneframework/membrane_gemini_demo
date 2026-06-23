@@ -77,8 +77,6 @@ defmodule Membrane.LLM.Demo.App.State do
     do: %{state | last_event: text} |> push_history({:event, text})
 
   def update(%__MODULE__{} = state, :clear_transcripts) do
-    # ResponseStart: input's prior paragraph stays visible until the user
-    # speaks again; the next output delta starts a fresh Gemini paragraph.
     %{state | input_pending_reset: true, output_pending_reset: true}
   end
 

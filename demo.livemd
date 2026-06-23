@@ -128,7 +128,6 @@ defmodule Membrane.LLM.Demo.Pipeline do
     tui_spec = [
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :tui))
-      |> child(:mic_realtimer, Membrane.Realtimer)
       |> child(:mic_tui_sink, %Demo.TuiSink{
         origin: :client,
         app: app

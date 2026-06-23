@@ -5,10 +5,11 @@ Mix.install(
   [
     {:kino_termite, "~> 0.1.1"},
     {:membrane_transcoder_plugin, "~> 0.4.0"},
+    {:membrane_raw_audio_parser_plugin, "~> 0.4.1"},
     {:membrane_webrtc_plugin, "~> 0.26.3"},
     {:membrane_gemini_demo, path: __DIR__}
-  ]
-  # lockfile: :membrane_gemini_demo
+  ],
+  lockfile: :membrane_gemini_demo
 )
 
 case System.fetch_env("LB_GEMINI_API_KEY") do
@@ -71,15 +72,19 @@ defmodule Membrane.LLM.Demo.Pipeline do
     do: send(pipeline, {:signaling, source_signaling, sink_signaling})
 
   @impl true
-  def handle_init(_ctx, [signaling: %{
-    source: source_signaling,
-    sink: sink_signaling
-  }]) do
+  def handle_init(_ctx,
+        signaling: %{
+          source: source_signaling,
+          sink: sink_signaling
+        }
+      ) do
     spec = [
       child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
       |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
       |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: @gemini_input_format})
-      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{output_stream_format: @gemini_input_format})
+      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{
+        output_stream_format: @gemini_input_format
+      })
       |> child(:mute_filter, Demo.MuteFilter)
       |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
       |> child(:mic_chunker, %Demo.ChunkFilter{
@@ -103,8 +108,9 @@ defmodule Membrane.LLM.Demo.Pipeline do
       }),
       child(:text_source, Demo.TextSource)
       |> via_in(:text_input)
-      |> get_child(:gemini),
+      |> get_child(:gemini)
     ]
+
     {[spec: spec], %{app: nil}}
   end
 
@@ -135,8 +141,9 @@ defmodule Membrane.LLM.Demo.Pipeline do
         app: app
       })
     ]
+
     {[spec: tui_spec, setup: :complete], %{state | app: app}}
-end
+  end
 
   @impl true
   def handle_info({:text, _text} = msg, _ctx, state),

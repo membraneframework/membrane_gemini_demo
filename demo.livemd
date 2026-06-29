@@ -4,8 +4,8 @@
 Mix.install(
   [
     {:kino_termite, "~> 0.1.1"},
-    {:membrane_transcoder_plugin, "~> 0.4.0"},
-    {:membrane_raw_audio_parser_plugin, "~> 0.4.1"},
+    {:membrane_transcoder_plugin, "~> 0.3.0"},
+    {:membrane_raw_audio_parser_plugin, "~> 0.5.0"},
     {:membrane_webrtc_plugin, "~> 0.26.3"},
     {:membrane_gemini_demo, path: __DIR__}
   ],
@@ -49,9 +49,8 @@ defmodule Membrane.LLM.Demo.Pipeline do
 
   alias Membrane.LLM.Demo
   alias Membrane.RawAudio
-  alias Membrane.Time
 
-  @chunk_ms 40
+  @chunk_duration Membrane.Time.milliseconds(40)
   @gemini_input_format %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
 
   @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
@@ -81,17 +80,17 @@ defmodule Membrane.LLM.Demo.Pipeline do
         output_stream_format: @gemini_input_format
       })
       |> child(:mute_filter, Demo.MuteFilter)
-      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
+      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
       })
       |> child(:mic_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))
       |> via_in(:audio_input)
       |> child(:gemini, Membrane.Gemini.Bin)
-      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
+      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
       })
       |> child(:gemini_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))
@@ -252,7 +251,7 @@ defmodule Membrane.LLM.Demo.AwaitBridge do
       {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
       _other -> state
     after
-      30_000-> raise "Timed out waiting for WebRTC bridge"
+      30_000 -> raise "Timed out waiting for WebRTC bridge"
     end
     |> do_await_bridge()
   end
@@ -300,7 +299,10 @@ Click `Connect` above and run the cell below to wait for the chatbot TUI to show
     id: Demo.Pipeline,
     start:
       {Membrane.Pipeline, :start_link,
-       [Demo.Pipeline, [app: app_pid, signaling: %{source: source_signaling, sink: sink_signaling}]]},
+       [
+         Demo.Pipeline,
+         [app: app_pid, signaling: %{source: source_signaling, sink: sink_signaling}]
+       ]},
     restart: :temporary
   })
 

@@ -1,9 +1,12 @@
-Mix.install([
-  {:membrane_gemini_demo, path: __DIR__},
-  {:membrane_gemini_plugin, "~> 0.1.2"},
-  {:membrane_portaudio_plugin, "~> 0.19.5"},
-  {:membrane_raw_audio_parser_plugin, "~> 0.4.1"}
-])
+Mix.install(
+  [
+    {:membrane_gemini_demo, path: __DIR__},
+    {:membrane_gemini_plugin, "~> 0.1.2"},
+    {:membrane_portaudio_plugin, "~> 0.19.5"},
+    {:membrane_raw_audio_parser_plugin, "~> 0.5.0"}
+  ],
+  lockfile: :membrane_gemini_demo
+)
 
 case System.fetch_env("GEMINI_API_KEY") do
   {:ok, api_key} ->
@@ -25,9 +28,9 @@ defmodule Native.Pipeline do
   require Membrane.Pad
 
   alias Membrane.LLM.Demo
-  alias Membrane.{Pad, Time}
+  alias Membrane.Pad
 
-  @chunk_ms 40
+  @chunk_duration Membrane.Time.milliseconds(40)
 
   @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
   def submit_text(pipeline, text), do: send(pipeline, {:text, text})
@@ -49,17 +52,17 @@ defmodule Native.Pipeline do
         sample_rate: 16_000
       })
       |> child(:mute_filter, Demo.MuteFilter)
-      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:mic_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
+      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
       })
       |> child(:mic_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))
       |> via_in(:audio_input)
       |> child(:gemini, Membrane.Gemini.Bin)
-      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{overwrite_pts?: true})
-      |> child(:gemini_chunker, %Demo.ChunkFilter{
-        chunk_duration: Time.milliseconds(@chunk_ms)
+      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
       })
       |> child(:gemini_tee, Membrane.Tee)
       |> via_out(Pad.ref(:output, :main))

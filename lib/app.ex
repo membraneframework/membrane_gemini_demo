@@ -57,25 +57,23 @@ defmodule Membrane.LLM.Demo.App do
   def handle_continue({:setup, opts}, _state) do
     app = self()
     terminal_factory = Keyword.get(opts, :terminal_factory, &Terminal.start/0)
-    pipeline_pid = Keyword.fetch!(opts, :pipeline_pid)
     pipeline_mod = Keyword.fetch!(opts, :pipeline_mod)
 
     :logger.remove_handler(:default)
     :logger.add_handler(:tui, LoggerHandler, %{config: %{app: app}})
 
-    pipeline_mod.set_app(pipeline_pid, app)
+    pipeline_pid =
+      receive do
+        {:pipeline_playing, pipeline_pid} -> pipeline_pid
+      after
+        @playing_timeout ->
+          raise "pipeline did not reach :playing within #{@playing_timeout}ms"
+      end
 
-    receive do
-      {:pipeline_playing, ^pipeline_pid} -> :ok
-    after
-      @playing_timeout ->
-        raise "pipeline did not reach :playing within #{@playing_timeout}ms"
-    end
-
-    # The terminal MUST be created inside this process: adapters like
-    # KinoTermite capture `self()` to route keystroke messages back to us.
-    # Also: KinoTermite uses `Kino.start_child` underneath, so this setup
-    # has to be in `handle_continue` instead of `init`, otherwise it deadlocks.
+    # The terminal MUST be created inside this process:
+    # adapters like KinoTermite capture `self()` to route keystroke messages back to us.
+    # Also: KinoTermite uses `Kino.start_child` underneath,
+    # so this setup has to be in `handle_continue` instead of `init`, otherwise it deadlocks.
     terminal = terminal_factory.()
 
     terminal =

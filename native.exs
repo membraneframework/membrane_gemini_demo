@@ -38,11 +38,10 @@ defmodule Native.Pipeline do
   @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
   def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
 
-  @spec set_app(pipeline :: pid(), Demo.App.t()) :: {:app, Demo.App.t()}
-  def set_app(pipeline, app), do: send(pipeline, {:app, app})
-
   @impl true
-  def handle_init(_ctx, _opts) do
+  def handle_init(_ctx, opts) do
+    app = Keyword.fetch!(opts, :app)
+
     spec = [
       child(:mic, %Membrane.PortAudio.Source{
         sample_format: :s16le,
@@ -70,24 +69,7 @@ defmodule Native.Pipeline do
       }),
       child(:text_source, Demo.TextSource)
       |> via_in(:text_input)
-      |> get_child(:gemini)
-    ]
-
-    {[spec: spec], %{app: nil}}
-  end
-
-  @impl true
-  def handle_setup(_ctx, state), do: {[setup: :incomplete], state}
-
-  @impl true
-  def handle_playing(_ctx, %{app: app} = state) when not is_nil(app) do
-    Demo.App.signal_pipeline_playing(app)
-    {[], state}
-  end
-
-  @impl true
-  def handle_info({:app, app}, _ctx, state) when is_pid(app) do
-    tui_spec = [
+      |> get_child(:gemini),
       get_child(:mic_tee)
       |> via_out(Pad.ref(:output, :tui))
       |> child(:mic_realtimer, Membrane.Realtimer)
@@ -98,7 +80,13 @@ defmodule Native.Pipeline do
       |> child(:gemini_tui_sink, %Demo.TuiSink{origin: :server, app: app})
     ]
 
-    {[spec: tui_spec, setup: :complete], %{state | app: app}}
+    {[spec: spec], %{app: app}}
+  end
+
+  @impl true
+  def handle_playing(_ctx, %{app: app} = state) do
+    Demo.App.signal_pipeline_playing(app)
+    {[], state}
   end
 
   @impl true
@@ -114,9 +102,10 @@ defmodule Native.Pipeline do
     do: {[notify_child: {:mute_filter, :toggle_mute}], state}
 end
 
-{:ok, _supervisor, pipeline} = Membrane.Pipeline.start_link(Native.Pipeline)
+app = Membrane.LLM.Demo.App.new(pipeline_mod: Native.Pipeline)
 
-app = Membrane.LLM.Demo.App.new(pipeline_pid: pipeline, pipeline_mod: Native.Pipeline)
+{:ok, _supervisor, _pipeline} = Membrane.Pipeline.start_link(Native.Pipeline, app: app)
+
 ref = Process.monitor(app)
 
 receive do

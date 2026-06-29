@@ -252,7 +252,7 @@ defmodule Membrane.LLM.Demo.AwaitBridge do
       {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
       _other -> state
     after
-      15_000 -> raise "Timed out waiting for WebRTC bridge"
+      30_000-> raise "Timed out waiting for WebRTC bridge"
     end
     |> do_await_bridge()
   end

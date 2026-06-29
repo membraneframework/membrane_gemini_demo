@@ -48,7 +48,7 @@ defmodule Membrane.LLM.Demo.ChunkFilter do
     do: {Enum.reverse([%Buffer{payload: bin, pts: pts} | acc]), pts + dur}
 
   defp chunk_bin(bin, size, pts, dur, acc) do
-    <<chunk::binary-size(size), rest::binary>> = bin
+    <<chunk::binary-size(^size), rest::binary>> = bin
 
     chunk_bin(rest, size, pts + dur, dur, [%Buffer{payload: chunk, pts: pts} | acc])
   end

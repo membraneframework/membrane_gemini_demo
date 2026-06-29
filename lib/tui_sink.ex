@@ -92,7 +92,7 @@ defmodule Membrane.LLM.Demo.TuiSink do
       for i <- 0..(num_blocks - 1) do
         start = i * block_size
 
-        <<_head::binary-size(start * 2), sample::signed-little-16, _tail::binary>> = binary
+        <<_head::binary-size(^start * 2), sample::signed-little-16, _tail::binary>> = binary
         sample / 32_768.0
       end
     end

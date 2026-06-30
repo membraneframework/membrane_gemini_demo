@@ -1,17 +1,12 @@
 defmodule Membrane.LLM.Demo.TuiSink do
   @moduledoc """
-  Terminal-UI sink for the demo.
+  TUI sink for the demo, facilitating communication between
+  the Membrane pipeline and the App module in two ways:
 
-  Two responsibilities, both feeding the `App` TUI given in `app`:
-
-    * **Waveform** — on every buffer it samples `sample_count` evenly-spaced
-      values from the raw 16-bit audio and hands them to `on_samples`, which the
-      caller uses to push them to the TUI (`App.mic_samples/2` / `App.gemini_samples/2`).
-    * **Events** — its `handle_event/4` translates `Membrane.Gemini.Events.*`
-      into `App` calls (transcripts, thinking, response start/end). This folds in
-      what used to be a separate `Membrane.Debug.Filter` sitting after the Gemini
-      bin. Only the sink on the Gemini branch ever receives those events; on the
-      mic branch the clause simply falls through.
+    * **Waveform** — on every buffer, samples `@sample_count` evenly-spaced
+      values from the raw 16-bit audio and forwards them to the TUI.
+    * **Events** — translates `Membrane.Gemini.Events.*`
+      into `App` calls (transcripts, thinking, response start/end).
   """
 
   use Membrane.Sink

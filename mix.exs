@@ -14,10 +14,16 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       deps: deps(),
       dialyzer: dialyzer(),
 
+      # hex
+      description: "TUI chatbot app using Membrane",
+      package: package(),
+
       # docs
       name: "Membrane Gemini Plugin demo",
       source_url: @github_url,
-      homepage_url: "https://membrane.stream"
+      docs: docs(),
+      homepage_url: "https://membrane.stream",
+      aliases: [docs: ["docs", &append_llms_links/1]]
     ]
   end
 
@@ -35,6 +41,7 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       {:membrane_core, "~> 1.0"},
       {:membrane_gemini_plugin, "~> 0.1.2"},
       {:termite, "~> 0.4.2"},
+      {:ex_doc, ">= 0.40.0", only: :dev, runtime: false},
       {:dialyxir, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, ">= 0.0.0", only: :dev, runtime: false}
     ]
@@ -50,6 +57,48 @@ defmodule Membrane.Gemini.Demo.Mixfile do
       [plt_local_path: "priv/plts", plt_core_path: "priv/plts"] ++ opts
     else
       opts
+    end
+  end
+
+  defp package do
+    [
+      maintainers: ["Membrane Team"],
+      licenses: ["Apache-2.0"],
+      links: %{
+        "GitHub" => @github_url,
+        "Membrane Framework Homepage" => "https://membrane.stream"
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      extras: ["README.md", "LICENSE"],
+      source_ref: "v#{@version}",
+      nest_modules_by_prefix: [Membrane.Template]
+    ]
+  end
+
+  defp append_llms_links(_args) do
+    output_dir = docs()[:output] || "doc"
+    path = Path.join(output_dir, "llms.txt")
+
+    if File.exists?(path) do
+      existing = File.read!(path)
+
+      footer = """
+
+
+      ## See Also
+
+      - [Membrane Framework AI Skill](https://hexdocs.pm/membrane_core/skill.md)
+      - [Membrane Core](https://hexdocs.pm/membrane_core/llms.txt)
+      """
+
+      File.write!(path, String.trim_trailing(existing) <> footer)
+    else
+      IO.warn("#{path} not found — llms.txt was not generated, check your ex_doc configuration")
     end
   end
 end

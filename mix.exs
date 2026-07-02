@@ -1,12 +1,12 @@
-defmodule Membrane.Template.Mixfile do
+defmodule Membrane.Gemini.Demo.Mixfile do
   use Mix.Project
 
   @version "0.1.0"
-  @github_url "https://github.com/membraneframework/membrane_template_plugin"
+  @github_url "https://github.com/membraneframework/membrane_gemini_demo"
 
   def project do
     [
-      app: :membrane_template_plugin,
+      app: :membrane_gemini_demo,
       version: @version,
       elixir: "~> 1.13",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -15,11 +15,11 @@ defmodule Membrane.Template.Mixfile do
       dialyzer: dialyzer(),
 
       # hex
-      description: "Template Plugin for Membrane Framework",
+      description: "TUI chatbot app using Membrane",
       package: package(),
 
       # docs
-      name: "Membrane Template plugin",
+      name: "Membrane Gemini Plugin demo",
       source_url: @github_url,
       docs: docs(),
       homepage_url: "https://membrane.stream",
@@ -27,18 +27,20 @@ defmodule Membrane.Template.Mixfile do
     ]
   end
 
-  def application do
-    [
-      extra_applications: []
-    ]
-  end
-
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_env), do: ["lib"]
+
+  def application do
+    [
+      extra_applications: [:logger]
+    ]
+  end
 
   defp deps do
     [
       {:membrane_core, "~> 1.0"},
+      {:membrane_gemini_plugin, "~> 0.1.2"},
+      {:termite, "~> 0.4.2"},
       {:ex_doc, ">= 0.40.0", only: :dev, runtime: false},
       {:dialyxir, ">= 0.0.0", only: :dev, runtime: false},
       {:credo, ">= 0.0.0", only: :dev, runtime: false}

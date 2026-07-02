@@ -1,0 +1,314 @@
+# Real-time chatbot app with Membrane
+
+```elixir
+Mix.install(
+  [
+    {:kino_termite, "~> 0.1.1"},
+    {:membrane_transcoder_plugin, "~> 0.3.0"},
+    {:membrane_raw_audio_parser_plugin, "~> 0.5.0"},
+    {:membrane_webrtc_plugin, "~> 0.26.3"},
+    {:membrane_gemini_demo, path: __DIR__}
+  ],
+  lockfile: :membrane_gemini_demo
+)
+
+case System.fetch_env("LB_GEMINI_API_KEY") do
+  {:ok, api_key} ->
+    Application.put_env(:gemini_ex, :api_key, api_key)
+
+  :error ->
+    raise """
+        A key for the Gemini Live API is required to run this example.
+        Please set `GEMINI_API_KEY` in your livebook's SECRETS section.
+    """
+end
+```
+
+## Hi!
+
+Welcome to this livebook demo, where we'll set up a Membrane pipeline powering a very simple chatbot app.
+
+For the UI, we've used [Termite](https://github.com/Gazler/termite) with the [KinoTermite](https://github.com/Gazler/kino_termite/tree/master) adapter that allows embedding an `xterm.js` terminal directly in this livebook.
+
+Enjoy!
+
+## The pipeline
+
+This is a pretty straightforward Membrane pipeline for our chatbot app. The central element is `Membrane.Gemini.Bin`, which is an endpoint streaming our inputs to and responses from the Gemini Live API.
+
+We use WebRTC for audio and its built-in echo cancellation, so we can talk with Gemini without it hearing feedback from itself.
+
+The `Demo.TuiSink` elements are used to send audio samples to the Termite process to render the waveforms in real time, while also handling events from `Membrane.Gemini.Bin`.
+
+```elixir
+defmodule Membrane.LLM.Demo.Pipeline do
+  use Membrane.Pipeline
+
+  import Membrane.ChildrenSpec
+  require Membrane.Pad
+
+  alias Membrane.LLM.Demo
+  alias Membrane.RawAudio
+
+  @chunk_duration Membrane.Time.milliseconds(40)
+  @gemini_input_format %RawAudio{sample_format: :s16le, channels: 1, sample_rate: 16_000}
+
+  @spec submit_text(pipeline :: pid(), String.t()) :: {:text, String.t()}
+  def submit_text(pipeline, text), do: send(pipeline, {:text, text})
+
+  @spec reset_session(pipeline :: pid()) :: :reset_session
+  def reset_session(pipeline), do: send(pipeline, :reset_session)
+
+  @spec toggle_mute(pipeline :: pid()) :: :toggle_mute
+  def toggle_mute(pipeline), do: send(pipeline, :toggle_mute)
+
+  @spec set_signaling(pipeline :: pid(), WebRTC.Signaling.t(), WebRTC.Signaling.t()) ::
+          {:signaling, WebRTC.Signaling.t(), WebRTC.Signaling.t()}
+  def set_signaling(pipeline, source_signaling, sink_signaling),
+    do: send(pipeline, {:signaling, source_signaling, sink_signaling})
+
+  @impl true
+  def handle_init(_ctx, opts) do
+    app = Keyword.fetch!(opts, :app)
+    %{source: source_signaling, sink: sink_signaling} = Keyword.fetch!(opts, :signaling)
+
+    spec = [
+      child(:webrtc_source, %Membrane.WebRTC.Source{signaling: source_signaling})
+      |> via_out(Pad.ref(:output, :main_audio), options: [kind: :audio])
+      |> child(:input_transcoder, %Membrane.Transcoder{output_stream_format: @gemini_input_format})
+      |> child(:input_resampler, %Membrane.FFmpeg.SWResample.Converter{
+        output_stream_format: @gemini_input_format
+      })
+      |> child(:mute_filter, Demo.MuteFilter)
+      |> child(:mic_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
+      })
+      |> child(:mic_tee, Membrane.Tee)
+      |> via_out(Pad.ref(:output, :main))
+      |> via_in(:audio_input)
+      |> child(:gemini, Membrane.Gemini.Bin)
+      |> child(:gemini_pts_normalizer, %Membrane.RawAudioParser{
+        overwrite_pts?: true,
+        chunk_duration: @chunk_duration
+      })
+      |> child(:gemini_tee, Membrane.Tee)
+      |> via_out(Pad.ref(:output, :main))
+      |> child(:output_transcoder, %Membrane.Transcoder{output_stream_format: Membrane.Opus})
+      |> via_in(Pad.ref(:input, :main_audio), options: [kind: :audio])
+      |> child(:webrtc_sink, %Membrane.WebRTC.Sink{
+        signaling: sink_signaling,
+        tracks: [:audio]
+      }),
+      child(:text_source, Demo.TextSource)
+      |> via_in(:text_input)
+      |> get_child(:gemini),
+      get_child(:mic_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:mic_tui_sink, %Demo.TuiSink{
+        origin: :client,
+        app: app
+      }),
+      get_child(:gemini_tee)
+      |> via_out(Pad.ref(:output, :tui))
+      |> child(:gemini_realtimer, Membrane.Realtimer)
+      |> child(:gemini_tui_sink, %Demo.TuiSink{
+        origin: :server,
+        app: app
+      })
+    ]
+
+    {[spec: spec], %{app: app}}
+  end
+
+  @impl true
+  def handle_playing(_ctx, %{app: app} = state) do
+    Demo.App.signal_pipeline_playing(app)
+    {[], state}
+  end
+
+  @impl true
+  def handle_info({:text, _text} = msg, _ctx, state),
+    do: {[notify_child: {:text_source, msg}], state}
+
+  @impl true
+  def handle_info(:reset_session, _ctx, state),
+    do: {[notify_child: {:gemini, :reset_session}], state}
+
+  @impl true
+  def handle_info(:toggle_mute, _ctx, state),
+    do: {[notify_child: {:mute_filter, :toggle_mute}], state}
+end
+```
+
+## The WebRTC bridge widget
+
+`Membrane.LLM.Demo.WebRTCBridge` is a `Kino.JS.Live` widget that hosts both
+peer connections in one iframe (so the browser's echo canceller sees mic capture
+and `<audio>` playback on the same page) and relays signalling between the JS and
+the two `Membrane.WebRTC.Signaling` channels.
+
+```elixir
+defmodule Membrane.LLM.Demo.WebRTCBridge do
+  use Kino.JS, assets_path: Path.join(__DIR__, "lib/assets/webrtc_bridge")
+  use Kino.JS.Live
+
+  alias Membrane.WebRTC.Signaling
+
+  @spec subscribe(Kino.JS.Live.t(), pid()) :: :ok
+  def subscribe(bridge, pid \\ self()) do
+    Kino.JS.Live.cast(bridge, {:subscribe, pid})
+  end
+
+  @spec new(Signaling.t(), Signaling.t()) :: Kino.JS.Live.t()
+  def new(source_signaling, sink_signaling) do
+    Kino.JS.Live.new(__MODULE__, %{source: source_signaling, sink: sink_signaling})
+  end
+
+  @impl true
+  def init(%{source: source, sink: sink}, ctx) do
+    Signaling.register_peer(source, message_format: :json_data)
+    Signaling.register_peer(sink, message_format: :json_data)
+
+    {:ok,
+     assign(ctx,
+       source: source,
+       sink: sink,
+       source_queue: [],
+       sink_queue: [],
+       drained?: false,
+       subscribers: MapSet.new(),
+       peer_states: %{}
+     )}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    payload = %{
+      source_queue: Enum.reverse(ctx.assigns.source_queue),
+      sink_queue: Enum.reverse(ctx.assigns.sink_queue)
+    }
+
+    {:ok, payload, assign(ctx, source_queue: [], sink_queue: [], drained?: true)}
+  end
+
+  @impl true
+  def handle_event("signal_source", message, ctx) do
+    Signaling.signal(ctx.assigns.source, message)
+    {:noreply, ctx}
+  end
+
+  def handle_event("signal_sink", message, ctx) do
+    Signaling.signal(ctx.assigns.sink, message)
+    {:noreply, ctx}
+  end
+
+  def handle_event("peer_state", %{"peer" => peer, "state" => state}, ctx) do
+    ctx = update(ctx, :peer_states, &Map.put(&1, peer, state))
+
+    for pid <- ctx.assigns.subscribers, do: send(pid, {:webrtc_bridge, peer, state})
+
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_cast({:subscribe, pid}, ctx) do
+    for {peer, state} <- ctx.assigns.peer_states, do: send(pid, {:webrtc_bridge, peer, state})
+
+    {:noreply, update(ctx, :subscribers, &MapSet.put(&1, pid))}
+  end
+
+  @impl true
+  def handle_info({:membrane_webrtc_signaling, pid, message, _meta}, ctx) do
+    {channel, queue_key} =
+      cond do
+        pid == ctx.assigns.source.pid -> {"source_signal", :source_queue}
+        pid == ctx.assigns.sink.pid -> {"sink_signal", :sink_queue}
+      end
+
+    if ctx.assigns.drained? do
+      broadcast_event(ctx, channel, message)
+      {:noreply, ctx}
+    else
+      {:noreply, update(ctx, queue_key, &[message | &1])}
+    end
+  end
+end
+```
+
+```elixir
+defmodule Membrane.LLM.Demo.AwaitBridge do
+  def await_connected(bridge) do
+    Membrane.LLM.Demo.WebRTCBridge.subscribe(bridge)
+    do_await_bridge(%{source?: false, sink?: false})
+  end
+
+  defp do_await_bridge(%{source?: true, sink?: true}), do: :ok
+
+  defp do_await_bridge(state) do
+    receive do
+      {:webrtc_bridge, "source", "connected"} -> %{state | source?: true}
+      {:webrtc_bridge, "sink", "connected"} -> %{state | sink?: true}
+      _other -> state
+    after
+      30_000 -> raise "Timed out waiting for WebRTC bridge"
+    end
+    |> do_await_bridge()
+  end
+end
+```
+
+## Start the pipeline + TUI
+
+Now that we've defined the modules for the pipeline and WebRTC I/O for this livebook, we use the generic `Membrane.LLM.Demo.App` module for the TUI (there's a native variant in `native.exs`!).
+
+```elixir
+alias Membrane.LLM.Demo
+
+Logger.configure(level: :warning)
+
+source_signaling = Membrane.WebRTC.Signaling.new()
+sink_signaling = Membrane.WebRTC.Signaling.new()
+
+bridge = Demo.WebRTCBridge.new(source_signaling, sink_signaling)
+
+bridge
+```
+
+Click `Connect` above and run the cell below to wait for the chatbot TUI to show up. You can speak with Gemini or send text messages using the chat prompt. Available chat commands:
+
+```
+/mute — mute / unmute the input device
+/debug — toggle the debug event log
+/clear — reset the conversation
+```
+
+```elixir
+{:ok, app_pid} =
+  Kino.start_child(
+    Supervisor.child_spec(
+      {Demo.App,
+       pipeline_mod: Demo.Pipeline,
+       terminal_factory: fn -> Termite.Terminal.start(adapter: KinoTermite.Adapter, rows: 50) end},
+      restart: :temporary
+    )
+  )
+
+{:ok, _supervisor, _pipeline} =
+  Kino.start_child(%{
+    id: Demo.Pipeline,
+    start:
+      {Membrane.Pipeline, :start_link,
+       [
+         Demo.Pipeline,
+         [app: app_pid, signaling: %{source: source_signaling, sink: sink_signaling}]
+       ]},
+    restart: :temporary
+  })
+
+Demo.AwaitBridge.await_connected(bridge)
+
+terminal = Demo.App.get_terminal(app_pid)
+KinoTermite.output(terminal)
+```
+
